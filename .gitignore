@@ -1,0 +1,24 @@
+# Node modules and build outputs
+node_modules/
+dist/
+dist-native/
+build/
+bin/
+*.exe
+*.apk
+*.log
+
+# Editor and OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.suo
+*.user
+
+# Local temp cache and media storage
+.tempmediaStorage/
+scratch/
+.system_generated/
+.agents/
+.git/
