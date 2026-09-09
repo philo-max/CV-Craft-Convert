@@ -4,6 +4,7 @@ export default function ResumeForm({ resumeData, onChange, onAIPolish }) {
   const [activeSection, setActiveSection] = useState('personalInfo');
   const [isScanning, setIsScanning] = useState(false);
   const [lastPhoto, setLastPhoto] = useState(resumeData.personalInfo.photo);
+  const displayPhoto = resumeData.personalInfo.photo?.length > 500000 ? '' : resumeData.personalInfo.photo;
 
   // Trigger scan animation when photo changes
   useEffect(() => {
@@ -18,7 +19,7 @@ export default function ResumeForm({ resumeData, onChange, onAIPolish }) {
     if (!resumeData.personalInfo.photo) {
       setLastPhoto('');
     }
-  }, [resumeData.personalInfo.photo]);
+  }, [resumeData.personalInfo.photo, lastPhoto]);
 
   const updatePersonalInfo = (field, value) => {
     onChange({
@@ -241,6 +242,34 @@ export default function ResumeForm({ resumeData, onChange, onAIPolish }) {
     onChange({ ...resumeData, honors: resumeData.honors.filter((_, i) => i !== index) });
   };
 
+  const updateCertificate = (index, value) => {
+    const certificates = [...(resumeData.certificates || [])];
+    certificates[index] = value;
+    onChange({ ...resumeData, certificates });
+  };
+
+  const addCertificate = () => {
+    onChange({ ...resumeData, certificates: [...(resumeData.certificates || []), "新获得技能证书"] });
+  };
+
+  const removeCertificate = (index) => {
+    onChange({ ...resumeData, certificates: (resumeData.certificates || []).filter((_, i) => i !== index) });
+  };
+
+  const updateHobby = (index, value) => {
+    const hobbies = [...(resumeData.hobbies || [])];
+    hobbies[index] = value;
+    onChange({ ...resumeData, hobbies });
+  };
+
+  const addHobby = () => {
+    onChange({ ...resumeData, hobbies: [...(resumeData.hobbies || []), "新的兴趣爱好"] });
+  };
+
+  const removeHobby = (index) => {
+    onChange({ ...resumeData, hobbies: (resumeData.hobbies || []).filter((_, i) => i !== index) });
+  };
+
   // Self Evaluation
   const updateEval = (index, value) => {
     const newEval = [...resumeData.selfEvaluation];
@@ -322,12 +351,21 @@ export default function ResumeForm({ resumeData, onChange, onAIPolish }) {
                 onChange={(e) => updatePersonalInfo('city', e.target.value)} 
               />
             </div>
+            <div className="form-group">
+              <label>出生年月</label>
+              <input
+                type="text"
+                placeholder="例如：2003.08"
+                value={resumeData.personalInfo.birthDate || ''}
+                onChange={(e) => updatePersonalInfo('birthDate', e.target.value)}
+              />
+            </div>
             
             {/* Profile Photo Uploader and Scan Preview */}
             <div className="form-group col-span-2">
               <label>证件照</label>
               <div style={{ display: 'flex', gap: '12px', alignItems: 'center', marginTop: '6px' }}>
-                {resumeData.personalInfo.photo && (
+                {displayPhoto && (
                   <div style={{ position: 'relative' }}>
                     <div style={{ 
                       width: '55px', 
@@ -339,7 +377,7 @@ export default function ResumeForm({ resumeData, onChange, onAIPolish }) {
                       background: '#000'
                     }}>
                       <img 
-                        src={resumeData.personalInfo.photo} 
+                        src={displayPhoto}
                         alt="预览" 
                         style={{ width: '100%', height: '100%', objectFit: 'cover' }} 
                       />
@@ -698,12 +736,12 @@ export default function ResumeForm({ resumeData, onChange, onAIPolish }) {
           onClick={() => toggleSection('honors')}
           style={{ cursor: 'pointer' }}
         >
-          <h3 className="form-section-title">🏆 荣誉与证书</h3>
+          <h3 className="form-section-title">🏆 荣誉奖项</h3>
           <span>{activeSection === 'honors' ? '▼' : '▶'}</span>
         </div>
         {activeSection === 'honors' && (
           <div className="form-group">
-            <label>荣誉 & 证书列表</label>
+            <label>荣誉奖项列表</label>
             {resumeData.honors.map((honor, idx) => (
               <div key={idx} style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
                 <input 
@@ -716,7 +754,67 @@ export default function ResumeForm({ resumeData, onChange, onAIPolish }) {
               </div>
             ))}
             <button className="btn btn-secondary btn-sm" onClick={addHonor} style={{ width: 'fit-content' }}>
-              + 添加证书/荣誉
+              + 添加荣誉奖项
+            </button>
+          </div>
+        )}
+      </div>
+
+      <div className="form-section">
+        <div
+          className="form-section-header"
+          onClick={() => toggleSection('certificates')}
+          style={{ cursor: 'pointer' }}
+        >
+          <h3 className="form-section-title">🎖️ 技能证书</h3>
+          <span>{activeSection === 'certificates' ? '▼' : '▶'}</span>
+        </div>
+        {activeSection === 'certificates' && (
+          <div className="form-group">
+            <label>技能证书列表</label>
+            {(resumeData.certificates || []).map((certificate, idx) => (
+              <div key={idx} style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
+                <input
+                  type="text"
+                  value={certificate}
+                  style={{ flex: 1 }}
+                  onChange={(e) => updateCertificate(idx, e.target.value)}
+                />
+                <button className="btn btn-danger btn-sm" onClick={() => removeCertificate(idx)}>✕</button>
+              </div>
+            ))}
+            <button className="btn btn-secondary btn-sm" onClick={addCertificate} style={{ width: 'fit-content' }}>
+              + 添加技能证书
+            </button>
+          </div>
+        )}
+      </div>
+
+      <div className="form-section">
+        <div
+          className="form-section-header"
+          onClick={() => toggleSection('hobbies')}
+          style={{ cursor: 'pointer' }}
+        >
+          <h3 className="form-section-title">🌿 兴趣爱好</h3>
+          <span>{activeSection === 'hobbies' ? '▼' : '▶'}</span>
+        </div>
+        {activeSection === 'hobbies' && (
+          <div className="form-group">
+            <label>兴趣爱好列表</label>
+            {(resumeData.hobbies || []).map((hobby, idx) => (
+              <div key={idx} style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
+                <input
+                  type="text"
+                  value={hobby}
+                  style={{ flex: 1 }}
+                  onChange={(e) => updateHobby(idx, e.target.value)}
+                />
+                <button className="btn btn-danger btn-sm" onClick={() => removeHobby(idx)}>✕</button>
+              </div>
+            ))}
+            <button className="btn btn-secondary btn-sm" onClick={addHobby} style={{ width: 'fit-content' }}>
+              + 添加兴趣爱好
             </button>
           </div>
         )}

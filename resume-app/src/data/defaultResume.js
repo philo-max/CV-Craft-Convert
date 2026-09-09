@@ -6,6 +6,7 @@ export const defaultResume = {
     email: "wzt72020@gmail.com",
     github: "github.com/philo-max",
     city: "北京",
+    birthDate: "2003.08",
     photo: "/avatar_placeholder.jpg"
   },
   education: {
@@ -147,8 +148,14 @@ export const defaultResume = {
     }
   ],
   "honors": [
-    "大学生暑期社会实践评比 三等奖（2025）",
+    "大学生暑期社会实践评比 三等奖（2025）"
+  ],
+  "certificates": [
     "联想测试工程师证书（认证通过）"
+  ],
+  "hobbies": [
+    "开源项目与技术社区",
+    "摄影与徒步"
   ],
   "selfEvaluation": [
     "全链路工程与开源习惯：拥有极强的动手实践能力，独立完成 4 个从“需求定义 -> 原型设计（PRD/UI） -> 代码实现（FastAPI/React/Vue3/Tauri） -> 部署发布”的完整开源项目。习惯规范使用 Git / Git Flow 管理代码，具备良好的开源协作与文档编写规范。",

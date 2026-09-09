@@ -1,18 +1,111 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { save } from '@tauri-apps/plugin-dialog';
+import { writeFile, writeTextFile } from '@tauri-apps/plugin-fs';
+import { check } from '@tauri-apps/plugin-updater';
 import { defaultResume } from './data/defaultResume';
 import ResumeForm from './components/ResumeForm';
 import ResumePreview from './components/ResumePreview';
 import RawEditor from './components/RawEditor';
 import { jsonToMarkdown, markdownToJson } from './utils/markdownParser';
-import html2canvas from 'html2canvas';
-import { jsPDF } from 'jspdf';
 
+const RESUME_STORAGE_KEY = 'cv-craft-resume';
+const HISTORY_STORAGE_KEY = 'cv-craft-history';
+const MAX_HISTORY_RECORDS = 20;
+const MAX_HISTORY_PHOTO_LENGTH = 500000;
+
+const isTauriApp = () => typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+
+const isOversizedPhoto = (photo) => typeof photo === 'string'
+  && photo.startsWith('data:image/')
+  && photo.length > MAX_HISTORY_PHOTO_LENGTH;
+
+const triggerDownload = (url, filename, revokeUrl = false) => {
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  if (revokeUrl) window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+};
+
+const saveExportFile = async (filename, extension, content) => {
+  if (!isTauriApp()) return false;
+  try {
+    const path = await save({
+      defaultPath: filename,
+      filters: [{ name: extension.toUpperCase(), extensions: [extension] }]
+    });
+    if (!path) return true;
+    if (typeof content === 'string') {
+      await writeTextFile(path, content);
+    } else {
+      await writeFile(path, content);
+    }
+    return true;
+  } catch (error) {
+    console.error('Native export failed:', error);
+    alert(`保存文件失败：${error.message || '请重新选择保存位置'}`);
+    return true;
+  }
+};
+
+const normalizeResumeData = (data) => ({
+  ...data,
+  personalInfo: {
+    ...data.personalInfo,
+    birthDate: data.personalInfo?.birthDate || ''
+  },
+  honors: Array.isArray(data.honors) ? data.honors : [],
+  certificates: Array.isArray(data.certificates) ? data.certificates : [],
+  hobbies: Array.isArray(data.hobbies) ? data.hobbies : []
+});
+
+const loadStoredResume = () => {
+  try {
+    const savedResume = localStorage.getItem(RESUME_STORAGE_KEY);
+    return savedResume ? normalizeResumeData(JSON.parse(savedResume)) : defaultResume;
+  } catch {
+    return defaultResume;
+  }
+};
+
+const loadHistoryRecords = () => {
+  try {
+    const savedHistory = JSON.parse(localStorage.getItem(HISTORY_STORAGE_KEY) || '[]');
+    if (!Array.isArray(savedHistory)) return [];
+    return savedHistory.map((record) => {
+      try {
+        const snapshot = JSON.parse(record.snapshot);
+        if (!isOversizedPhoto(snapshot.personalInfo?.photo)) return record;
+        return {
+          ...record,
+          snapshot: JSON.stringify({
+            ...snapshot,
+            personalInfo: { ...snapshot.personalInfo, photo: '' }
+          })
+        };
+      } catch {
+        return record;
+      }
+    });
+  } catch {
+    return [];
+  }
+};
 
 export default function App() {
-  const [resumeData, setResumeData] = useState(defaultResume);
+  const [resumeData, setResumeData] = useState(loadStoredResume);
   const [activeTab, setActiveTab] = useState('visual'); // 'visual' or 'raw'
   const [exportDropdownOpen, setExportDropdownOpen] = useState(false);
   const [showStyleDesigner, setShowStyleDesigner] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
+  const [historyRecords, setHistoryRecords] = useState(loadHistoryRecords);
+  const [lastSavedAt, setLastSavedAt] = useState(null);
+  const [isHydrated, setIsHydrated] = useState(false);
+  const [updateStatus, setUpdateStatus] = useState('idle');
+  const [availableUpdate, setAvailableUpdate] = useState(null);
+  const [updateProgress, setUpdateProgress] = useState(null);
 
   // Click outside listener to close the export dropdown
   useEffect(() => {
@@ -41,6 +134,9 @@ export default function App() {
     fontFamily: 'Noto Sans SC',
     lineHeight: 1.55,
     padding: 20, // margins in mm
+    doubleLeftPadding: 20,
+    doubleRightPadding: 20,
+    leftColumnRatio: 31,
     sectionMargin: 16, // px between sections
     itemMargin: 12, // px between items
     titleStyle: 'leftbar', // 'leftbar', 'bottomline', 'borderwrap', 'plain'
@@ -51,7 +147,9 @@ export default function App() {
   const [sections, setSections] = useState([
     { id: 'education', name: '🎓 教育背景', col: 'left', order: 0 },
     { id: 'skills', name: '⚡ 专业技能', col: 'left', order: 1 },
-    { id: 'honors', name: '🏆 荣誉证书', col: 'left', order: 2 },
+    { id: 'honors', name: '🏆 荣誉奖项', col: 'left', order: 2 },
+    { id: 'certificates', name: '🎖️ 技能证书', col: 'left', order: 3 },
+    { id: 'hobbies', name: '🌿 兴趣爱好', col: 'left', order: 4 },
     { id: 'projects', name: '🚀 项目经历', col: 'right', order: 0 },
     { id: 'selfEvaluation', name: '💡 自我评价', col: 'right', order: 1 }
   ]);
@@ -89,11 +187,119 @@ export default function App() {
     document.documentElement.setAttribute('data-theme', theme);
   }, [theme]);
 
+  useEffect(() => {
+    setIsHydrated(true);
+  }, []);
+
+  useEffect(() => {
+    const photo = resumeData.personalInfo.photo;
+    if (!isOversizedPhoto(photo)) return undefined;
+
+    let cancelled = false;
+    const image = new Image();
+    image.onload = () => {
+      const maxWidth = 300;
+      const maxHeight = 390;
+      const scale = Math.min(maxWidth / image.width, maxHeight / image.height, 1);
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.round(image.width * scale));
+      canvas.height = Math.max(1, Math.round(image.height * scale));
+      const context = canvas.getContext('2d');
+      context.drawImage(image, 0, 0, canvas.width, canvas.height);
+      const compressedPhoto = canvas.toDataURL('image/jpeg', 0.82);
+      if (!cancelled) {
+        setResumeData((data) => ({
+          ...data,
+          personalInfo: { ...data.personalInfo, photo: compressedPhoto }
+        }));
+      }
+    };
+    image.src = photo;
+    return () => {
+      cancelled = true;
+    };
+  }, [resumeData.personalInfo.photo]);
+
+  const checkForUpdates = useCallback(async () => {
+    if (!isTauriApp()) return;
+
+    try {
+      setUpdateStatus('checking');
+      setAvailableUpdate(null);
+      setUpdateProgress(null);
+      const update = await check();
+      if (update) {
+        setAvailableUpdate(update);
+        setUpdateStatus('available');
+      } else {
+        setUpdateStatus('latest');
+      }
+    } catch (error) {
+      console.error('检查更新失败：', error);
+      setUpdateStatus('error');
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!isTauriApp()) return undefined;
+    const timeoutId = window.setTimeout(() => {
+      checkForUpdates();
+    }, 2000);
+    return () => window.clearTimeout(timeoutId);
+  }, [checkForUpdates]);
+
+  const handleInstallUpdate = async () => {
+    if (!availableUpdate) return;
+    if (!window.confirm(`即将下载并安装 v${availableUpdate.version}。安装完成后应用会自动关闭，是否继续？`)) return;
+
+    try {
+      localStorage.setItem(RESUME_STORAGE_KEY, JSON.stringify(resumeData));
+      setUpdateStatus('downloading');
+      let downloadedLength = 0;
+      let contentLength = 0;
+      await availableUpdate.downloadAndInstall((event) => {
+        if (event.event === 'Started') {
+          contentLength = event.data.contentLength || 0;
+        }
+        if (event.event === 'Progress') {
+          downloadedLength += event.data.chunkLength;
+          setUpdateProgress(contentLength ? Math.round((downloadedLength / contentLength) * 100) : null);
+        }
+      });
+      setUpdateStatus('installed');
+    } catch (error) {
+      console.error('安装更新失败：', error);
+      setUpdateStatus('error');
+    }
+  };
+
+  useEffect(() => {
+    if (!isHydrated) return;
+    if (isOversizedPhoto(resumeData.personalInfo.photo)) return;
+
+    const timeoutId = window.setTimeout(() => {
+      const snapshot = JSON.stringify(resumeData);
+      const savedAt = new Date().toLocaleString('zh-CN', { hour12: false });
+      try {
+        localStorage.setItem(RESUME_STORAGE_KEY, snapshot);
+        setLastSavedAt(savedAt);
+        if (historyRecords[0]?.snapshot === snapshot) return;
+        const nextRecords = [{ id: Date.now(), savedAt, snapshot }, ...historyRecords].slice(0, MAX_HISTORY_RECORDS);
+        localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(nextRecords));
+        setHistoryRecords(nextRecords);
+      } catch (error) {
+        console.error('本地保存失败：', error);
+      }
+    }, 700);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [historyRecords, isHydrated, resumeData]);
+
   // Clean up audio context on unmount
   useEffect(() => {
     return () => {
       if (noiseSource) {
-        try { noiseSource.stop(); } catch (e) {}
+        try { noiseSource.stop(); } catch {}
       }
     };
   }, [noiseSource]);
@@ -109,7 +315,7 @@ export default function App() {
       if (noiseSource) {
         try {
           noiseSource.stop();
-        } catch (e) {}
+        } catch {}
       }
       setBgmActive(false);
     } else {
@@ -424,11 +630,11 @@ ${rawText}`;
           if (!parsed.personalInfo || !parsed.education || !parsed.skills || !parsed.projects) {
             throw new Error("JSON 格式不符合简历规范（缺少必要字段）");
           }
-          setResumeData(parsed);
+          setResumeData(normalizeResumeData(parsed));
           alert("JSON 简历导入成功！");
         } else if (file.name.endsWith('.md') || file.name.endsWith('.txt')) {
           const parsed = markdownToJson(text);
-          setResumeData(parsed);
+          setResumeData(normalizeResumeData(parsed));
           alert("Markdown 简历导入与格式转换成功！");
         } else {
           alert("不支持的文件格式，请上传 .json 或 .md 文件");
@@ -440,15 +646,24 @@ ${rawText}`;
     reader.readAsText(file);
   };
 
+  const handleRestoreRecord = (record) => {
+    if (!window.confirm(`确定恢复到 ${record.savedAt} 的版本吗？`)) return;
+    try {
+      setResumeData(normalizeResumeData(JSON.parse(record.snapshot)));
+      setShowHistory(false);
+    } catch {
+      alert('该修改记录已损坏，无法恢复。');
+    }
+  };
+
   // Export current data as JSON file
-  const handleExportJSON = () => {
-    const blob = new Blob([JSON.stringify(resumeData, null, 2)], { type: 'application/json' });
+  const handleExportJSON = async () => {
+    const filename = `${resumeData.personalInfo.name}_简历_${new Date().toISOString().split('T')[0]}.json`;
+    const content = JSON.stringify(resumeData, null, 2);
+    if (await saveExportFile(filename, 'json', content)) return;
+    const blob = new Blob([content], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${resumeData.personalInfo.name}_简历_${new Date().toISOString().split('T')[0]}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
+    triggerDownload(url, filename, true);
   };
 
   ;
@@ -456,15 +671,13 @@ ${rawText}`;
   ;
 
   // Export current data as Markdown file
-  const handleExportMarkdown = () => {
+  const handleExportMarkdown = async () => {
     const mdText = jsonToMarkdown(resumeData);
+    const filename = `${resumeData.personalInfo.name}_简历_${new Date().toISOString().split('T')[0]}.md`;
+    if (await saveExportFile(filename, 'md', mdText)) return;
     const blob = new Blob([mdText], { type: 'text/markdown' });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${resumeData.personalInfo.name}_简历_${new Date().toISOString().split('T')[0]}.md`;
-    a.click();
-    URL.revokeObjectURL(url);
+    triggerDownload(url, filename, true);
   };
 
   ;
@@ -472,11 +685,25 @@ ${rawText}`;
   ;
 
   // Compile fully self-contained HTML for download
-  const handleExportHTML = () => {
-    const { personalInfo, education, skills, projects, honors, selfEvaluation } = resumeData;
+  const handleExportHTML = async () => {
+    const { personalInfo, education, skills, projects, honors = [], certificates = [], hobbies = [], selfEvaluation } = resumeData;
     const config = layoutConfig;
     const hasPhoto = config.showPhoto && personalInfo.photo;
     const isDouble = config.layoutStyle === 'double';
+    const hasText = (value) => typeof value === 'string' && value.trim().length > 0;
+    const visibleCourses = (education.courses || []).filter(hasText);
+    const hasEducation = [education.school, education.major, education.degree, education.startDate, education.endDate, education.status].some(hasText)
+      || visibleCourses.length > 0;
+    const visibleSkills = skills.filter((skill) => hasText(skill.category) || (skill.items || []).some(hasText));
+    const visibleProjects = projects.filter((project) => project.enabled !== false && (
+      [project.name, project.role, project.type, project.repo].some(hasText)
+      || (project.work || []).some(hasText)
+      || (project.outcomes || []).some(hasText)
+    ));
+    const visibleHonors = honors.filter(hasText);
+    const visibleCertificates = certificates.filter(hasText);
+    const visibleHobbies = hobbies.filter(hasText);
+    const visibleEvaluations = selfEvaluation.filter(hasText);
 
     const escapeHTML = (text) => {
       if (!text) return "";
@@ -514,25 +741,25 @@ ${rawText}`;
       </h3>`;
     };
 
-    const coursesHTML = education.courses.map(c => escapeHTML(c)).join('、');
+    const coursesHTML = visibleCourses.map(c => escapeHTML(c)).join('、');
     
-    const skillsHTML = skills.map(skill => `
+    const skillsHTML = visibleSkills.map(skill => `
       <div class="skill-cat">
         <span class="skill-cat-title">${escapeHTML(skill.category)}</span>：
-        <span>${skill.items.map(item => parseMD(item)).join('；')}</span>
+        <span>${(skill.items || []).filter(hasText).map(item => parseMD(item)).join('；')}</span>
       </div>
     `).join('');
 
-    const skillsVerticalHTML = skills.map(skill => `
+    const skillsVerticalHTML = visibleSkills.map(skill => `
       <div class="skill-cat" style="display: block; margin-bottom: 6px;">
         <div style="font-weight: bold; color: ${config.textColor}; margin-bottom: 2px;">${escapeHTML(skill.category)}</div>
         <div style="color: #4b5563; line-height: ${config.lineHeight};">
-          ${skill.items.map(item => `<div style="margin-bottom: 2px;">• ${parseMD(item)}</div>`).join('')}
+          ${(skill.items || []).filter(hasText).map(item => `<div style="margin-bottom: 2px;">• ${parseMD(item)}</div>`).join('')}
         </div>
       </div>
     `).join('');
 
-    const projectsHTML = projects.filter(proj => proj.enabled !== false).map(proj => `
+    const projectsHTML = visibleProjects.map(proj => `
       <div class="project-item" style="margin-bottom: ${config.itemMargin}px;">
         <div class="project-header">
           <div class="project-name-role">
@@ -556,11 +783,11 @@ ${rawText}`;
       </div>
     `).join('');
 
-    const honorsHTML = honors && honors.length > 0 ? `
+    const honorsHTML = visibleHonors.length > 0 ? `
       <div class="section" style="margin-bottom: ${config.sectionMargin}px;">
-        ${renderTitleHTML('🏆 荣誉证书')}
+        ${renderTitleHTML('🏆 荣誉奖项')}
         <div class="honors-list">
-          ${honors.map(honor => `
+          ${visibleHonors.map(honor => `
             <div class="honor-item">
               <span>🏆</span>
               <span>${parseMD(honor)}</span>
@@ -570,11 +797,39 @@ ${rawText}`;
       </div>
     ` : '';
 
-    const selfEvalHTML = selfEvaluation && selfEvaluation.length > 0 ? `
+    const certificatesHTML = visibleCertificates.length > 0 ? `
+      <div class="section" style="margin-bottom: ${config.sectionMargin}px;">
+        ${renderTitleHTML('🎖️ 技能证书')}
+        <div class="honors-list">
+          ${visibleCertificates.map(certificate => `
+            <div class="honor-item">
+              <span>🎖️</span>
+              <span>${parseMD(certificate)}</span>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+    ` : '';
+
+    const hobbiesHTML = visibleHobbies.length > 0 ? `
+      <div class="section" style="margin-bottom: ${config.sectionMargin}px;">
+        ${renderTitleHTML('🌿 兴趣爱好')}
+        <div class="honors-list">
+          ${visibleHobbies.map(hobby => `
+            <div class="honor-item">
+              <span>🌿</span>
+              <span>${parseMD(hobby)}</span>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+    ` : '';
+
+    const selfEvalHTML = visibleEvaluations.length > 0 ? `
       <div class="section" style="margin-bottom: ${config.sectionMargin}px;">
         ${renderTitleHTML('💡 自我评价')}
         <ul class="eval-list">
-          ${selfEvaluation.map(line => `
+          ${visibleEvaluations.map(line => `
             <li>
               <span class="bullet-dot">•</span>
               ${parseMD(line)}
@@ -587,7 +842,7 @@ ${rawText}`;
     const renderSectionHTML = (id) => {
       switch (id) {
         case 'education':
-          return `
+          return hasEducation ? `
             <div class="section" style="margin-bottom: ${config.sectionMargin}px;">
               ${renderTitleHTML('🎓 教育背景')}
               <div style="font-weight: bold; font-size: 13.5px;">${escapeHTML(education.school)}</div>
@@ -597,9 +852,9 @@ ${rawText}`;
               <div style="font-size: 11.5px; color: #4b5563; line-height: 1.4;">
                 <strong>主修课程</strong>：${coursesHTML}
               </div>
-            </div>`;
+            </div>` : '';
         case 'skills':
-          return isDouble ? `
+          return visibleSkills.length > 0 ? (isDouble ? `
             <div class="section" style="margin-bottom: ${config.sectionMargin}px;">
               ${renderTitleHTML('▍ 专业技能')}
               <div class="skills-list" style="font-size: 12px; gap: 8px;">
@@ -611,15 +866,19 @@ ${rawText}`;
               <div class="skills-list">
                 ${skillsHTML}
               </div>
-            </div>`;
+            </div>`) : '';
         case 'projects':
-          return `
+          return visibleProjects.length > 0 ? `
             <div class="section" style="margin-bottom: ${config.sectionMargin}px;">
               ${renderTitleHTML('🚀 开源项目与实践经历')}
               ${projectsHTML}
-            </div>`;
+            </div>` : '';
         case 'honors':
           return honorsHTML;
+        case 'certificates':
+          return certificatesHTML;
+        case 'hobbies':
+          return hobbiesHTML;
         case 'selfEvaluation':
           return selfEvalHTML;
         default:
@@ -661,7 +920,7 @@ ${rawText}`;
       background-color: ${config.bgColor};
       color: ${config.textColor};
       line-height: ${config.lineHeight};
-      padding: ${config.padding}mm;
+      padding: ${config.padding}mm ${config.layoutStyle === 'double' ? config.doubleRightPadding : config.padding}mm ${config.padding}mm ${config.layoutStyle === 'double' ? config.doubleLeftPadding : config.padding}mm;
       font-size: 14.5px;
       --resume-accent: ${config.accentColor};
       --resume-divider: ${config.dividerColor};
@@ -907,7 +1166,7 @@ ${rawText}`;
     /* Layout Double column styles */
     .layout-double {
       display: grid;
-      grid-template-columns: 200px 1fr;
+      grid-template-columns: ${config.leftColumnRatio ?? 31}% 1fr;
       gap: 20px;
     }
     .layout-double .left-col {
@@ -956,12 +1215,13 @@ ${rawText}`;
         
         <!-- Contact -->
         <div class="section" style="margin-bottom: ${config.sectionMargin}px;">
-          ${renderTitleHTML('▍ 联系方式')}
+          ${renderTitleHTML('👤 基本信息')}
           <div class="vertical-contact">
             <div class="vertical-contact-item"><span>📞</span> ${escapeHTML(personalInfo.phone)}</div>
             <div class="vertical-contact-item"><span>✉️</span> <a href="mailto:${personalInfo.email}">${escapeHTML(personalInfo.email)}</a></div>
             <div class="vertical-contact-item" style="font-size: 11px;"><span>🔗</span> <a href="https://${personalInfo.github}" target="_blank">${escapeHTML(personalInfo.github)}</a></div>
             ${personalInfo.city ? `<div class="vertical-contact-item"><span>📍</span> ${escapeHTML(personalInfo.city)}</div>` : ''}
+            ${personalInfo.birthDate ? `<div class="vertical-contact-item"><span>🎂</span> ${escapeHTML(personalInfo.birthDate)}</div>` : ''}
           </div>
         </div>
 
@@ -992,6 +1252,7 @@ ${rawText}`;
         <div class="contact-item"><span>✉️</span> <a href="mailto:${escapeHTML(personalInfo.email)}">${escapeHTML(personalInfo.email)}</a></div>
         <div class="contact-item"><span>🔗</span> <a href="https://${escapeHTML(personalInfo.github)}" target="_blank">${escapeHTML(personalInfo.github)}</a></div>
         ${personalInfo.city ? `<div class="contact-item"><span>📍</span> ${escapeHTML(personalInfo.city)}</div>` : ''}
+        ${personalInfo.birthDate ? `<div class="contact-item"><span>🎂</span> ${escapeHTML(personalInfo.birthDate)}</div>` : ''}
       </div>
     </div>
 
@@ -1001,13 +1262,11 @@ ${rawText}`;
 </body>
 </html>`;
 
+    const filename = `${personalInfo.name}_网页简历.html`;
+    if (await saveExportFile(filename, 'html', htmlContent)) return;
     const blob = new Blob([htmlContent], { type: 'text/html' });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${personalInfo.name}_网页简历.html`;
-    a.click();
-    URL.revokeObjectURL(url);
+    triggerDownload(url, filename, true);
   }
 
   // Export entire resume to high-definition PNG using an off-screen cloned node (immune to scrolling/viewport squeeze)
@@ -1031,6 +1290,7 @@ ${rawText}`;
     await new Promise(r => setTimeout(r, 250));
     
     try {
+      const { default: html2canvas } = await import('html2canvas');
       const canvas = await html2canvas(clone, {
         scale: 3, // 3x scale for crisp HD texts
         useCORS: true,
@@ -1039,15 +1299,16 @@ ${rawText}`;
       });
       
       const url = canvas.toDataURL('image/png');
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `${resumeData.personalInfo.name}_简历_高清长图.png`;
-      a.click();
+      const blob = await (await fetch(url)).blob();
+      const filename = `${resumeData.personalInfo.name}_简历_高清长图.png`;
+      if (!(await saveExportFile(filename, 'png', new Uint8Array(await blob.arrayBuffer())))) {
+        triggerDownload(url, filename);
+      }
     } catch (err) {
       console.error("PNG generation failed:", err);
       alert("导出图片失败: " + err.message);
     } finally {
-      document.body.removeChild(clone);
+      clone.remove();
     }
   };
 
@@ -1071,6 +1332,7 @@ ${rawText}`;
     await new Promise(r => setTimeout(r, 250));
     
     try {
+      const { default: html2canvas } = await import('html2canvas');
       const canvas = await html2canvas(clone, {
         scale: 3, // Ultra-sharp 3x DPI
         useCORS: true,
@@ -1091,10 +1353,11 @@ ${rawText}`;
         ctx.drawImage(canvas, 0, topOffset, canvas.width, pageCanvas.height, 0, 0, canvas.width, pageCanvas.height);
         
         const url = pageCanvas.toDataURL('image/png');
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `${resumeData.personalInfo.name}_简历_第${pageNum}页.png`;
-        a.click();
+        const blob = await (await fetch(url)).blob();
+        const filename = `${resumeData.personalInfo.name}_简历_第${pageNum}页.png`;
+        if (!(await saveExportFile(filename, 'png', new Uint8Array(await blob.arrayBuffer())))) {
+          triggerDownload(url, filename);
+        }
         
         topOffset += pageHeightPx;
         pageNum++;
@@ -1105,7 +1368,7 @@ ${rawText}`;
       console.error("Pages PNG generation failed:", err);
       alert("导出分页图片失败: " + err.message);
     } finally {
-      document.body.removeChild(clone);
+      clone.remove();
     }
   };
 
@@ -1129,6 +1392,10 @@ ${rawText}`;
     document.body.appendChild(clone);
     
     try {
+      const [{ default: html2canvas }, { jsPDF }] = await Promise.all([
+        import('html2canvas'),
+        import('jspdf')
+      ]);
       const canvas = await html2canvas(clone, {
         scale: 2, // 2x scale is optimal for A4 sizes
         useCORS: true,
@@ -1157,12 +1424,14 @@ ${rawText}`;
         heightLeft -= pageHeight;
       }
       
-      pdf.save(`${resumeData.personalInfo.name}_简历_高清PDF.pdf`);
+      const filename = `${resumeData.personalInfo.name}_简历_高清PDF.pdf`;
+      const pdfBytes = new Uint8Array(pdf.output('arraybuffer'));
+      if (!(await saveExportFile(filename, 'pdf', pdfBytes))) pdf.save(filename);
     } catch (err) {
       console.error("Canvas PDF generation failed:", err);
       alert("导出 PDF 失败: " + err.message);
     } finally {
-      document.body.removeChild(clone);
+      clone.remove();
     }
   }
 
@@ -1186,6 +1455,10 @@ ${rawText}`;
     await new Promise(r => setTimeout(r, 250));
     
     try {
+      const [{ default: html2canvas }, { jsPDF }] = await Promise.all([
+        import('html2canvas'),
+        import('jspdf')
+      ]);
       const canvas = await html2canvas(clone, {
         scale: 2.5, // 2.5x scale
         useCORS: true,
@@ -1220,28 +1493,16 @@ ${rawText}`;
       
       const pdf = new jsPDF('p', 'mm', 'a4');
       pdf.addImage(imgData, 'JPEG', xOffset, yOffset, finalWidth, finalHeight, undefined, 'FAST');
-      pdf.save(`${resumeData.personalInfo.name}_简历_单页自适应.pdf`);
+      const filename = `${resumeData.personalInfo.name}_简历_单页自适应.pdf`;
+      const pdfBytes = new Uint8Array(pdf.output('arraybuffer'));
+      if (!(await saveExportFile(filename, 'pdf', pdfBytes))) pdf.save(filename);
     } catch (err) {
       console.error("Single page PDF export failed:", err);
       alert("导出单页 PDF 失败: " + err.message);
     } finally {
-      document.body.removeChild(clone);
+      clone.remove();
     }
   };
-
-  // Auto fit margins and sizes to fit 1 A4 page natively in HTML
-  const handleAutoFitSinglePage = () => {
-    setLayoutConfig(prev => ({
-      ...prev,
-      density: 'compact',
-      padding: 12,
-      sectionMargin: 8,
-      itemMargin: 6,
-      lineHeight: 1.4,
-      fontFamily: 'Noto Sans SC'
-    }));
-    alert("✨ 已自动调优排版间距！边距、模块高度及行高已自适应收缩至黄金比例，帮助您的简历原生融入单页 A4 纸内。");
-  };;
 
   ;
 
@@ -1283,6 +1544,55 @@ ${rawText}`;
               onChange={handleFileUpload}
             />
           </label>
+
+          <div className="export-dropdown-container" style={{ position: 'relative' }}>
+            <button
+              className="btn btn-secondary btn-sm"
+              onClick={() => setShowHistory(!showHistory)}
+              title={lastSavedAt ? `最近自动保存：${lastSavedAt}` : '本地自动保存修改记录'}
+            >
+              🕘 修改记录
+            </button>
+            {showHistory && (
+              <div className="export-dropdown-menu" style={{ minWidth: '260px', maxHeight: '300px', overflowY: 'auto' }}>
+                {historyRecords.length === 0 ? (
+                  <div className="dropdown-item" style={{ cursor: 'default' }}>暂无修改记录</div>
+                ) : historyRecords.map((record) => (
+                  <button
+                    key={record.id}
+                    className="dropdown-item"
+                    onClick={() => handleRestoreRecord(record)}
+                    style={{ display: 'flex', justifyContent: 'space-between', gap: '12px' }}
+                  >
+                    <span>恢复此版本</span>
+                    <span style={{ color: 'var(--text-secondary)', fontSize: '11px' }}>{record.savedAt}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <button
+            className="btn btn-secondary btn-sm"
+            onClick={updateStatus === 'available' ? handleInstallUpdate : checkForUpdates}
+            disabled={updateStatus === 'checking' || updateStatus === 'downloading'}
+            title={
+              updateStatus === 'available'
+                ? `发现 v${availableUpdate?.version}，点击下载并安装`
+                : updateStatus === 'latest'
+                  ? '当前已是最新版本，点击再次检查'
+                  : updateStatus === 'error'
+                    ? '更新检查失败，点击重试'
+                    : '检查应用更新'
+            }
+          >
+            {updateStatus === 'checking' && '⏳ 检查中'}
+            {updateStatus === 'available' && `🆕 更新至 v${availableUpdate?.version}`}
+            {updateStatus === 'downloading' && `⬇️ 下载中${updateProgress === null ? '' : ` ${updateProgress}%`}`}
+            {updateStatus === 'installed' && '✓ 即将安装'}
+            {updateStatus === 'latest' && '✓ 已是最新版'}
+            {(updateStatus === 'idle' || updateStatus === 'error') && (updateStatus === 'error' ? '⚠️ 重试更新' : '⬆️ 检查更新')}
+          </button>
 
           {/* Unified Export Dropdown Menu */}
           <div className="export-dropdown-container" style={{ position: 'relative' }}>
@@ -1491,6 +1801,32 @@ ${rawText}`;
                     style={{ width: '100%', height: '4px', cursor: 'pointer' }}
                   />
                 </div>
+                {layoutConfig.layoutStyle === 'double' && (
+                  <>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <span style={{ color: 'var(--text-secondary)' }}>左侧边距</span>
+                        <span>{layoutConfig.doubleLeftPadding}mm</span>
+                      </div>
+                      <input
+                        type="range" min="10" max="30" value={layoutConfig.doubleLeftPadding}
+                        onChange={(e) => setLayoutConfig({ ...layoutConfig, doubleLeftPadding: parseInt(e.target.value) })}
+                        style={{ width: '100%', height: '4px', cursor: 'pointer' }}
+                      />
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <span style={{ color: 'var(--text-secondary)' }}>右侧边距</span>
+                        <span>{layoutConfig.doubleRightPadding}mm</span>
+                      </div>
+                      <input
+                        type="range" min="10" max="30" value={layoutConfig.doubleRightPadding}
+                        onChange={(e) => setLayoutConfig({ ...layoutConfig, doubleRightPadding: parseInt(e.target.value) })}
+                        style={{ width: '100%', height: '4px', cursor: 'pointer' }}
+                      />
+                    </div>
+                  </>
+                )}
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                     <span style={{ color: 'var(--text-secondary)' }}>模块间距</span>
@@ -1823,6 +2159,7 @@ ${rawText}`;
             resumeData={resumeData} 
             layoutConfig={layoutConfig} 
             sections={sections}
+            onLayoutConfigChange={setLayoutConfig}
           />
         </section>
       </main>
