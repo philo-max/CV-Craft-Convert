@@ -1,7 +1,7 @@
 import React from 'react';
 
-export default function ResumePreview({ resumeData, layoutConfig, sections }) {
-  const { personalInfo, education, skills, projects, honors, selfEvaluation } = resumeData;
+export default function ResumePreview({ resumeData, layoutConfig, sections, onLayoutConfigChange }) {
+  const { personalInfo, education, skills, projects, honors = [], certificates = [], hobbies = [], selfEvaluation } = resumeData;
   
   const config = layoutConfig || {
     accentColor: '#1e3a8a',
@@ -16,6 +16,9 @@ export default function ResumePreview({ resumeData, layoutConfig, sections }) {
     fontFamily: 'Noto Sans SC',
     lineHeight: 1.55,
     padding: 20,
+    doubleLeftPadding: 20,
+    doubleRightPadding: 20,
+    leftColumnRatio: 31,
     sectionMargin: 16,
     itemMargin: 12,
     titleStyle: 'leftbar',
@@ -26,11 +29,27 @@ export default function ResumePreview({ resumeData, layoutConfig, sections }) {
     { id: 'education', col: 'left', order: 0 },
     { id: 'skills', col: 'left', order: 1 },
     { id: 'honors', col: 'left', order: 2 },
+    { id: 'certificates', col: 'left', order: 3 },
+    { id: 'hobbies', col: 'left', order: 4 },
     { id: 'projects', col: 'right', order: 0 },
     { id: 'selfEvaluation', col: 'right', order: 1 }
   ];
 
   const activeSections = sections || defaultSectionsOrder;
+  const hasText = (value) => typeof value === 'string' && value.trim().length > 0;
+  const educationCourses = education.courses || [];
+  const hasEducation = [education.school, education.major, education.degree, education.startDate, education.endDate, education.status].some(hasText)
+    || educationCourses.some(hasText);
+  const visibleSkills = skills.filter((skill) => hasText(skill.category) || (skill.items || []).some(hasText));
+  const visibleProjects = projects.filter((project) => project.enabled !== false && (
+    [project.name, project.role, project.type, project.repo].some(hasText)
+    || (project.work || []).some(hasText)
+    || (project.outcomes || []).some(hasText)
+  ));
+  const visibleHonors = honors.filter(hasText);
+  const visibleCertificates = certificates.filter(hasText);
+  const visibleHobbies = hobbies.filter(hasText);
+  const visibleEvaluations = selfEvaluation.filter(hasText);
 
   const parseInlineMarkdown = (text) => {
     if (!text) return "";
@@ -40,7 +59,8 @@ export default function ResumePreview({ resumeData, layoutConfig, sections }) {
     return <span dangerouslySetInnerHTML={{ __html: html }} />;
   };
 
-  const hasPhoto = config.showPhoto && personalInfo.photo;
+  const displayPhoto = personalInfo.photo?.length > 500000 ? '' : personalInfo.photo;
+  const hasPhoto = config.showPhoto && displayPhoto;
   const isDouble = config.layoutStyle === 'double';
 
   // Helper to render customized section titles
@@ -82,7 +102,7 @@ export default function ResumePreview({ resumeData, layoutConfig, sections }) {
 
     switch (id) {
       case 'education':
-        return (
+        return hasEducation ? (
           <div className="resume-section" key="education" style={{ marginBottom: sMargin }}>
             {renderSectionTitle('🎓 教育背景')}
             <div style={{ marginBottom: '6px', marginTop: '6px' }}>
@@ -97,21 +117,21 @@ export default function ResumePreview({ resumeData, layoutConfig, sections }) {
                 <div>{education.startDate} – {education.endDate}</div>
               </div>
               <div style={{ fontSize: '11.5px', color: 'var(--resume-text-secondary)', lineHeight: '1.4' }}>
-                <strong>主修课程</strong>：{education.courses.join('、')}
+                <strong>主修课程</strong>：{educationCourses.join('、')}
               </div>
             </div>
           </div>
-        );
+        ) : null;
       case 'skills':
-        return (
+        return visibleSkills.length > 0 ? (
           <div className="resume-section" key="skills" style={{ marginBottom: sMargin }}>
             {renderSectionTitle('⚡ 专业技能')}
             <div className="resume-skills-list" style={{ fontSize: '12px', gap: '6px', marginTop: '6px' }}>
-              {skills.map((skill, idx) => (
+              {visibleSkills.map((skill, idx) => (
                 <div key={idx} className="resume-skill-cat" style={{ display: 'block' }}>
                   <div style={{ fontWeight: 'bold', color: 'var(--resume-text-primary)', marginBottom: '2px', fontSize: '12.5px' }}>{skill.category}</div>
                   <div style={{ color: 'var(--resume-text-secondary)', lineHeight: '1.4' }}>
-                    {skill.items.map((item, itemIdx) => (
+                    {(skill.items || []).map((item, itemIdx) => (
                       <span key={itemIdx} style={{ display: 'block', marginBottom: '1px' }}>
                         • {parseInlineMarkdown(item)}
                       </span>
@@ -121,13 +141,13 @@ export default function ResumePreview({ resumeData, layoutConfig, sections }) {
               ))}
             </div>
           </div>
-        );
+        ) : null;
       case 'projects':
-        return (
+        return visibleProjects.length > 0 ? (
           <div className="resume-section" key="projects" style={{ marginBottom: sMargin }}>
             {renderSectionTitle('🚀 开源项目与实践经历')}
             <div style={{ marginTop: '8px' }}>
-              {projects.filter(proj => proj.enabled !== false).map((proj, idx) => (
+              {visibleProjects.map((proj, idx) => (
                 <div key={idx} className="resume-project-item" style={{ marginBottom: iMargin }}>
                   <div className="resume-project-header">
                     <div className="resume-project-name-role">
@@ -164,13 +184,13 @@ export default function ResumePreview({ resumeData, layoutConfig, sections }) {
               ))}
             </div>
           </div>
-        );
+        ) : null;
       case 'honors':
-        return honors && honors.length > 0 ? (
+        return visibleHonors.length > 0 ? (
           <div className="resume-section" key="honors" style={{ marginBottom: sMargin }}>
-            {renderSectionTitle('🏆 荣誉证书')}
+            {renderSectionTitle('🏆 荣誉奖项')}
             <div className="resume-honors-list" style={{ fontSize: '12px', gap: '4px', marginTop: '6px' }}>
-              {honors.map((honor, idx) => (
+              {visibleHonors.map((honor, idx) => (
                 <div key={idx} style={{ display: 'flex', alignItems: 'flex-start', gap: '4px' }}>
                   <span>🏆</span>
                   <span>{parseInlineMarkdown(honor)}</span>
@@ -179,12 +199,40 @@ export default function ResumePreview({ resumeData, layoutConfig, sections }) {
             </div>
           </div>
         ) : null;
+      case 'certificates':
+        return visibleCertificates.length > 0 ? (
+          <div className="resume-section" key="certificates" style={{ marginBottom: sMargin }}>
+            {renderSectionTitle('🎖️ 技能证书')}
+            <div className="resume-honors-list" style={{ fontSize: '12px', gap: '4px', marginTop: '6px' }}>
+              {visibleCertificates.map((certificate, idx) => (
+                <div key={idx} style={{ display: 'flex', alignItems: 'flex-start', gap: '4px' }}>
+                  <span>🎖️</span>
+                  <span>{parseInlineMarkdown(certificate)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null;
+      case 'hobbies':
+        return visibleHobbies.length > 0 ? (
+          <div className="resume-section" key="hobbies" style={{ marginBottom: sMargin }}>
+            {renderSectionTitle('🌿 兴趣爱好')}
+            <div className="resume-honors-list" style={{ fontSize: '12px', gap: '4px', marginTop: '6px' }}>
+              {visibleHobbies.map((hobby, idx) => (
+                <div key={idx} style={{ display: 'flex', alignItems: 'flex-start', gap: '4px' }}>
+                  <span>🌿</span>
+                  <span>{parseInlineMarkdown(hobby)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null;
       case 'selfEvaluation':
-        return selfEvaluation && selfEvaluation.length > 0 ? (
+        return visibleEvaluations.length > 0 ? (
           <div className="resume-section" key="selfEvaluation" style={{ marginBottom: sMargin }}>
             {renderSectionTitle('💡 自我评价')}
             <ul className="resume-eval-list" style={{ fontSize: '12.5px', marginTop: '6px' }}>
-              {selfEvaluation.map((evalLine, idx) => (
+              {visibleEvaluations.map((evalLine, idx) => (
                 <li key={idx} style={{ listStyleType: 'none', position: 'relative', paddingLeft: '12px', marginBottom: '4px' }}>
                   <span style={{ position: 'absolute', left: 0, color: 'var(--resume-accent)' }}>•</span>
                   {parseInlineMarkdown(evalLine)}
@@ -224,9 +272,17 @@ export default function ResumePreview({ resumeData, layoutConfig, sections }) {
     background: config.bgColor,
     color: config.textColor,
     fontFamily: config.fontFamily === 'Inter' ? "'Inter', 'Noto Sans SC', sans-serif" : config.fontFamily === 'Outfit' ? "'Outfit', 'Noto Sans SC', sans-serif" : "'Noto Sans SC', sans-serif",
-    padding: `${config.padding}mm`,
+    padding: `${config.padding}mm ${isDouble ? (config.doubleRightPadding ?? config.padding) : config.padding}mm ${config.padding}mm ${isDouble ? (config.doubleLeftPadding ?? config.padding) : config.padding}mm`,
     lineHeight: config.lineHeight,
     borderRadius: '4px'
+  };
+
+  const updateLeftColumnRatio = (event) => {
+    if (!onLayoutConfigChange) return;
+    const layout = event.currentTarget.parentElement;
+    const { left, width } = layout.getBoundingClientRect();
+    const ratio = Math.min(45, Math.max(22, Math.round(((event.clientX - left) / width) * 100)));
+    onLayoutConfigChange({ ...config, leftColumnRatio: ratio });
   };
 
   if (isDouble) {
@@ -244,14 +300,14 @@ export default function ResumePreview({ resumeData, layoutConfig, sections }) {
         id="resume-print-area"
         style={dynamicPaperStyles}
       >
-        <div className="resume-layout-double">
+        <div className="resume-layout-double" style={{ gridTemplateColumns: `${config.leftColumnRatio ?? 31}% 1fr` }}>
           {/* Left Column (Narrow Sidebar) */}
           <div className="left-col" style={{ borderRight: `1px solid var(--resume-border)` }}>
             {/* Profile Photo */}
             {hasPhoto && (
               <div className="resume-sidebar-photo" style={{ marginBottom: '16px', textAlign: 'center' }}>
                 <img 
-                  src={personalInfo.photo} 
+                  src={displayPhoto}
                   alt="证件照" 
                   style={{ width: '100px', height: '130px', objectFit: 'cover', borderRadius: `${config.borderRadius}px`, border: '1px solid var(--resume-border)' }} 
                 />
@@ -260,7 +316,7 @@ export default function ResumePreview({ resumeData, layoutConfig, sections }) {
             
             {/* Contact Info */}
             <div className="resume-section" style={{ marginBottom: `${config.sectionMargin}px` }}>
-              {renderSectionTitle('▍ 联系方式')}
+              {renderSectionTitle('👤 基本信息')}
               <div className="vertical-contact" style={{ marginTop: '6px' }}>
                 <div className="vertical-contact-item"><span>📞</span> {personalInfo.phone}</div>
                 <div className="vertical-contact-item"><span>✉️</span> <a href={`mailto:${personalInfo.email}`}>{personalInfo.email}</a></div>
@@ -268,6 +324,7 @@ export default function ResumePreview({ resumeData, layoutConfig, sections }) {
                   <span>🔗</span> <a href={`https://${personalInfo.github}`} target="_blank" rel="noopener noreferrer">{personalInfo.github}</a>
                 </div>
                 {personalInfo.city && <div className="vertical-contact-item"><span>📍</span> {personalInfo.city}</div>}
+                {personalInfo.birthDate && <div className="vertical-contact-item"><span>🎂</span> {personalInfo.birthDate}</div>}
               </div>
             </div>
 
@@ -288,6 +345,19 @@ export default function ResumePreview({ resumeData, layoutConfig, sections }) {
             {/* Modular Main Content Sections */}
             {rightSections.map(sec => renderSectionContent(sec.id))}
           </div>
+          <div
+            className="column-divider-handle no-print"
+            title="拖动调整分栏线"
+            style={{ left: `${config.leftColumnRatio ?? 31}%` }}
+            onPointerDown={(event) => {
+              event.currentTarget.setPointerCapture(event.pointerId);
+              updateLeftColumnRatio(event);
+            }}
+            onPointerMove={(event) => {
+              if (event.currentTarget.hasPointerCapture(event.pointerId)) updateLeftColumnRatio(event);
+            }}
+            onPointerUp={(event) => event.currentTarget.releasePointerCapture(event.pointerId)}
+          />
         </div>
 
         {/* Visual page break guide lines */}
@@ -337,10 +407,15 @@ export default function ResumePreview({ resumeData, layoutConfig, sections }) {
                   <span>📍</span> {personalInfo.city}
                 </div>
               )}
+              {personalInfo.birthDate && (
+                <div className="resume-contact-item">
+                  <span>🎂</span> {personalInfo.birthDate}
+                </div>
+              )}
             </div>
           </div>
           <div className="resume-header-photo">
-            <img src={personalInfo.photo} alt="证件照" style={{ borderRadius: `${config.borderRadius}px` }} />
+            <img src={displayPhoto} alt="证件照" style={{ borderRadius: `${config.borderRadius}px` }} />
           </div>
         </div>
       ) : (
@@ -362,6 +437,11 @@ export default function ResumePreview({ resumeData, layoutConfig, sections }) {
             {personalInfo.city && (
               <div className="resume-contact-item">
                 <span>📍</span> {personalInfo.city}
+              </div>
+            )}
+            {personalInfo.birthDate && (
+              <div className="resume-contact-item">
+                <span>🎂</span> {personalInfo.birthDate}
               </div>
             )}
           </div>

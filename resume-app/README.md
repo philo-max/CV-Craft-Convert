@@ -1,3 +1,22 @@
+# CV Craft Windows Desktop App
+
+This project can run as a Vite web app or a Windows desktop application powered by Tauri.
+
+```bash
+npm install
+npm run desktop:dev
+```
+
+To create a Windows installer, run:
+
+```bash
+npm run desktop:build
+```
+
+The NSIS installer will be written to `src-tauri/target/release/bundle/nsis/`.
+
+Building the desktop app requires Rust's MSVC toolchain and the Microsoft C++ Build Tools.
+
 # React + Vite
 
 This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.

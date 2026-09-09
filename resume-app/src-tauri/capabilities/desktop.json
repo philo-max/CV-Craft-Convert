@@ -1,0 +1,32 @@
+{
+  "identifier": "desktop-capability",
+  "platforms": [
+    "macOS",
+    "windows",
+    "linux"
+  ],
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "updater:default",
+    "dialog:default",
+    {
+      "identifier": "fs:allow-write-file",
+      "allow": [
+        {
+          "path": "$HOME/**/*"
+        },
+        {
+          "path": "$DESKTOP/**/*"
+        },
+        {
+          "path": "$DOCUMENT/**/*"
+        },
+        {
+          "path": "$DOWNLOAD/**/*"
+        }
+      ]
+    }
+  ]
+}

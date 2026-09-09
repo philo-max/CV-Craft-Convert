@@ -2,13 +2,16 @@
  * Converts the structured resume JSON data into standard Markdown text
  */
 export function jsonToMarkdown(data) {
-  const { personalInfo, education, skills, projects, honors, selfEvaluation } = data;
+  const { personalInfo, education, skills, projects, honors = [], certificates = [], hobbies = [], selfEvaluation } = data;
 
   let md = `# ${personalInfo.name}\n\n`;
   md += `**求职意向**：${personalInfo.intent}  \n`;
   md += `**联系电话**：${personalInfo.phone}  \n`;
   md += `**电子邮箱**：${personalInfo.email}  \n`;
   md += `**GitHub**：[${personalInfo.github}](https://${personalInfo.github})  \n`;
+  if (personalInfo.birthDate) {
+    md += `**出生年月**：${personalInfo.birthDate}  \n`;
+  }
   if (personalInfo.city) {
     md += `**期望城市**：${personalInfo.city}  \n`;
   }
@@ -54,9 +57,25 @@ export function jsonToMarkdown(data) {
 
   // Honors Section
   if (honors && honors.length > 0) {
-    md += `## ▍ 荣誉与证书\n\n`;
+    md += `## ▍ 荣誉奖项\n\n`;
     honors.forEach(honor => {
       md += `* ${honor}\n`;
+    });
+    md += `\n---\n\n`;
+  }
+
+  if (certificates.length > 0) {
+    md += `## ▍ 技能证书\n\n`;
+    certificates.forEach(certificate => {
+      md += `* ${certificate}\n`;
+    });
+    md += `\n---\n\n`;
+  }
+
+  if (hobbies.length > 0) {
+    md += `## ▍ 兴趣爱好\n\n`;
+    hobbies.forEach(hobby => {
+      md += `* ${hobby}\n`;
     });
     md += `\n---\n\n`;
   }
@@ -79,11 +98,13 @@ export function markdownToJson(md) {
   const lines = md.split('\n');
   
   const result = {
-    personalInfo: { name: "", intent: "", phone: "", email: "", github: "", city: "" },
+    personalInfo: { name: "", intent: "", phone: "", email: "", github: "", city: "", birthDate: "" },
     education: { school: "", major: "", degree: "", startDate: "", endDate: "", status: "", courses: [] },
     skills: [],
     projects: [],
     honors: [],
+    certificates: [],
+    hobbies: [],
     selfEvaluation: []
   };
 
@@ -133,6 +154,11 @@ export function markdownToJson(md) {
       if (match) result.personalInfo.city = match[1].replace(/  $/, '').trim();
       continue;
     }
+    if (line.includes('**出生年月**')) {
+      const match = line.match(/\*\*出生年月\*\*[:：]\s*(.*)/);
+      if (match) result.personalInfo.birthDate = match[1].replace(/  $/, '').trim();
+      continue;
+    }
 
     // 3. Section detection
     if (line.startsWith('## ')) {
@@ -141,6 +167,10 @@ export function markdownToJson(md) {
         currentSection = "edu_skills";
       } else if (secTitle.includes('项目') || secTitle.includes('经历')) {
         currentSection = "projects";
+      } else if (secTitle.includes('兴趣爱好')) {
+        currentSection = "hobbies";
+      } else if (secTitle.includes('技能证书') || secTitle.includes('职业证书')) {
+        currentSection = "certificates";
       } else if (secTitle.includes('荣誉') || secTitle.includes('证书')) {
         currentSection = "honors";
       } else if (secTitle.includes('自我评价')) {
@@ -292,6 +322,12 @@ export function markdownToJson(md) {
       }
       else if (currentSection === "honors") {
         result.honors.push(bulletContent);
+      }
+      else if (currentSection === "certificates") {
+        result.certificates.push(bulletContent);
+      }
+      else if (currentSection === "hobbies") {
+        result.hobbies.push(bulletContent);
       }
       else if (currentSection === "evaluation") {
         result.selfEvaluation.push(bulletContent);

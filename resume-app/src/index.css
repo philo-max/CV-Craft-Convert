@@ -795,6 +795,7 @@ textarea {
   display: grid;
   grid-template-columns: 200px 1fr;
   gap: 20px;
+  position: relative;
 }
 
 .resume-layout-double .left-col {
@@ -804,6 +805,32 @@ textarea {
 
 .resume-layout-double .right-col {
   padding-left: 4px;
+}
+
+.column-divider-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 14px;
+  transform: translateX(-7px);
+  cursor: col-resize;
+  touch-action: none;
+  z-index: 2;
+}
+
+.column-divider-handle::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 6px;
+  width: 2px;
+  background: transparent;
+}
+
+.column-divider-handle:hover::after,
+.column-divider-handle:active::after {
+  background: var(--resume-accent);
 }
 
 .vertical-contact {
