@@ -1,7 +1,69 @@
-import React from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 
-export default function ResumePreview({ resumeData, layoutConfig, sections, onLayoutConfigChange }) {
+const getResumeFontStack = (fontFamily) => {
+  const fontStacks = {
+    'Microsoft YaHei': "'Microsoft YaHei', 'Noto Sans SC', sans-serif",
+    DengXian: "'DengXian', 'Microsoft YaHei', 'Noto Sans SC', sans-serif",
+    SimSun: "SimSun, 'Songti SC', serif",
+    Inter: "'Inter', 'Noto Sans SC', sans-serif",
+    Outfit: "'Outfit', 'Noto Sans SC', sans-serif"
+  };
+  return fontStacks[fontFamily] || "'Noto Sans SC', sans-serif";
+};
+
+function EditableText({ value, path, onChange, onSelect, fieldStyle, className, style, block = false }) {
+  const [editing, setEditing] = useState(false);
+  const elementRef = useRef(null);
+  const Tag = block ? 'div' : 'span';
+  const commit = () => {
+    const nextValue = elementRef.current?.innerText.replace(/\n+$/g, '') ?? '';
+    setEditing(false);
+    if (nextValue !== value) onChange(path, nextValue);
+  };
+
+  useEffect(() => {
+    if (!editing) return;
+    elementRef.current?.focus();
+  }, [editing]);
+
+  return (
+    <Tag
+      ref={elementRef}
+      className={`resume-editable ${className || ''}`}
+      style={{ ...style, ...fieldStyle }}
+      contentEditable={editing}
+      suppressContentEditableWarning
+      spellCheck={false}
+      role="textbox"
+      tabIndex={0}
+      onClick={() => {
+        onSelect(path);
+        setEditing(true);
+      }}
+      onKeyDown={(event) => {
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          elementRef.current.innerText = value || '';
+          elementRef.current.blur();
+        }
+        if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+          event.preventDefault();
+          elementRef.current.blur();
+        }
+      }}
+      onBlur={commit}
+      title="点击直接编辑，Ctrl + Enter 保存，Esc 取消"
+    >
+      {value}
+    </Tag>
+  );
+}
+
+export default function ResumePreview({ resumeData, layoutConfig, sections, onLayoutConfigChange, onFieldChange, onAddProject, onDeleteProject, onFieldStyleChange }) {
   const { personalInfo, education, skills, projects, honors = [], certificates = [], hobbies = [], selfEvaluation } = resumeData;
+  const [selectedField, setSelectedField] = useState(null);
+  const [pageOverflow, setPageOverflow] = useState(false);
+  const [overflowDismissed, setOverflowDismissed] = useState(false);
   
   const config = layoutConfig || {
     accentColor: '#1e3a8a',
@@ -13,7 +75,10 @@ export default function ResumePreview({ resumeData, layoutConfig, sections, onLa
     timeline: true,
     layoutStyle: 'double',
     showGuidelines: false,
-    fontFamily: 'Noto Sans SC',
+    fontFamily: 'Microsoft YaHei',
+    nameFontSize: 22,
+    titleFontSize: 12.5,
+    bodyFontSize: 10.5,
     lineHeight: 1.55,
     padding: 20,
     doubleLeftPadding: 20,
@@ -41,23 +106,55 @@ export default function ResumePreview({ resumeData, layoutConfig, sections, onLa
   const hasEducation = [education.school, education.major, education.degree, education.startDate, education.endDate, education.status].some(hasText)
     || educationCourses.some(hasText);
   const visibleSkills = skills.filter((skill) => hasText(skill.category) || (skill.items || []).some(hasText));
-  const visibleProjects = projects.filter((project) => project.enabled !== false && (
-    [project.name, project.role, project.type, project.repo].some(hasText)
-    || (project.work || []).some(hasText)
-    || (project.outcomes || []).some(hasText)
-  ));
+  const visibleProjects = projects
+    .map((project, index) => ({ project, index }))
+    .filter(({ project }) => project.enabled !== false && (
+      [project.name, project.role, project.type, project.repo].some(hasText)
+      || (project.work || []).some(hasText)
+      || (project.outcomes || []).some(hasText)
+    ));
+  const editText = (path, value, options = {}) => (
+    <EditableText path={path} value={value || ''} onChange={onFieldChange} onSelect={setSelectedField} fieldStyle={config.fieldStyles?.[path]} {...options} />
+  );
+  const selectedStyle = config.fieldStyles?.[selectedField] || {};
+  useEffect(() => {
+    const frameId = window.requestAnimationFrame(() => {
+      const paper = document.getElementById('resume-print-area');
+      if (paper) {
+        const overflows = paper.scrollHeight > 1130;
+        setPageOverflow(overflows);
+        if (!overflows) setOverflowDismissed(false);
+      }
+    });
+    return () => window.cancelAnimationFrame(frameId);
+  }, [resumeData, layoutConfig]);
+
+  const renderOverflowNotice = () => pageOverflow && !overflowDismissed ? (
+    <div className="resume-overflow-notice no-print">
+      <span>内容超过一页 A4，可切换“紧凑排版”或“单页优先”。</span>
+      <button type="button" onClick={() => setOverflowDismissed(true)} aria-label="关闭 A4 提示">×</button>
+    </div>
+  ) : null;
+  const renderFormattingToolbar = () => selectedField ? (
+    <div className="resume-format-toolbar no-print" role="toolbar" aria-label="文字格式">
+      <span className="resume-format-label">文字格式</span>
+      <select value={selectedStyle.fontFamily || ''} onChange={(event) => onFieldStyleChange(selectedField, { fontFamily: event.target.value || undefined })} aria-label="字体">
+        <option value="">跟随模板</option>
+        <option value="Microsoft YaHei">微软雅黑</option>
+        <option value="DengXian">等线</option>
+        <option value="SimSun">宋体</option>
+      </select>
+      <input type="number" min="8" max="32" value={selectedStyle.fontSize ? Number.parseFloat(selectedStyle.fontSize) : ''} placeholder="字号" onChange={(event) => onFieldStyleChange(selectedField, { fontSize: event.target.value ? `${event.target.value}pt` : undefined })} aria-label="字号" />
+      <button type="button" className={selectedStyle.fontWeight === '700' ? 'is-active' : ''} onClick={() => onFieldStyleChange(selectedField, { fontWeight: selectedStyle.fontWeight === '700' ? undefined : '700' })}>B</button>
+      <input type="color" value={selectedStyle.color || config.textColor} onChange={(event) => onFieldStyleChange(selectedField, { color: event.target.value })} aria-label="文字颜色" />
+      <button type="button" className={selectedStyle.textAlign === 'left' ? 'is-active' : ''} onClick={() => onFieldStyleChange(selectedField, { textAlign: selectedStyle.textAlign === 'left' ? undefined : 'left' })}>左</button>
+      <button type="button" className={selectedStyle.textAlign === 'center' ? 'is-active' : ''} onClick={() => onFieldStyleChange(selectedField, { textAlign: selectedStyle.textAlign === 'center' ? undefined : 'center' })}>中</button>
+    </div>
+  ) : null;
   const visibleHonors = honors.filter(hasText);
   const visibleCertificates = certificates.filter(hasText);
   const visibleHobbies = hobbies.filter(hasText);
   const visibleEvaluations = selfEvaluation.filter(hasText);
-
-  const parseInlineMarkdown = (text) => {
-    if (!text) return "";
-    const html = text
-      .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-      .replace(/\[(.*?)\]\((.*?)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
-    return <span dangerouslySetInnerHTML={{ __html: html }} />;
-  };
 
   const displayPhoto = personalInfo.photo?.length > 500000 ? '' : personalInfo.photo;
   const hasPhoto = config.showPhoto && displayPhoto;
@@ -107,17 +204,21 @@ export default function ResumePreview({ resumeData, layoutConfig, sections, onLa
             {renderSectionTitle('🎓 教育背景')}
             <div style={{ marginBottom: '6px', marginTop: '6px' }}>
               <div className="resume-edu-item">
-                <div style={{ fontWeight: 'bold' }}>{education.school}</div>
+                {editText('education.school', education.school, { block: true, style: { fontWeight: 'bold' } })}
                 <div style={{ fontSize: '12.5px', color: 'var(--resume-text-secondary)' }}>
-                  {education.major}
+                  {editText('education.major', education.major)}
                 </div>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11.5px', color: 'var(--resume-text-secondary)', marginBottom: '4px' }}>
-                <div>{education.degree} · {education.status}</div>
-                <div>{education.startDate} – {education.endDate}</div>
+                <div>
+                  {editText('education.degree', education.degree)}
+                  {hasText(education.degree) && hasText(education.status) && ' · '}
+                  {hasText(education.status) && editText('education.status', education.status)}
+                </div>
+                <div>{editText('education.startDate', education.startDate)} – {editText('education.endDate', education.endDate)}</div>
               </div>
               <div style={{ fontSize: '11.5px', color: 'var(--resume-text-secondary)', lineHeight: '1.4' }}>
-                <strong>主修课程</strong>：{educationCourses.join('、')}
+                <strong>主修课程</strong>：{editText('education.courses', educationCourses.join('、'))}
               </div>
             </div>
           </div>
@@ -129,11 +230,11 @@ export default function ResumePreview({ resumeData, layoutConfig, sections, onLa
             <div className="resume-skills-list" style={{ fontSize: '12px', gap: '6px', marginTop: '6px' }}>
               {visibleSkills.map((skill, idx) => (
                 <div key={idx} className="resume-skill-cat" style={{ display: 'block' }}>
-                  <div style={{ fontWeight: 'bold', color: 'var(--resume-text-primary)', marginBottom: '2px', fontSize: '12.5px' }}>{skill.category}</div>
+                  <div style={{ fontWeight: 'bold', color: 'var(--resume-text-primary)', marginBottom: '2px', fontSize: '12.5px' }}>{editText(`skills.${idx}.category`, skill.category)}</div>
                   <div style={{ color: 'var(--resume-text-secondary)', lineHeight: '1.4' }}>
                     {(skill.items || []).map((item, itemIdx) => (
                       <span key={itemIdx} style={{ display: 'block', marginBottom: '1px' }}>
-                        • {parseInlineMarkdown(item)}
+                        • {editText(`skills.${idx}.items.${itemIdx}`, item)}
                       </span>
                     ))}
                   </div>
@@ -147,41 +248,51 @@ export default function ResumePreview({ resumeData, layoutConfig, sections, onLa
           <div className="resume-section" key="projects" style={{ marginBottom: sMargin }}>
             {renderSectionTitle('🚀 开源项目与实践经历')}
             <div style={{ marginTop: '8px' }}>
-              {visibleProjects.map((proj, idx) => (
-                <div key={idx} className="resume-project-item" style={{ marginBottom: iMargin }}>
+              {visibleProjects.map(({ project: proj, index }) => (
+                <div key={index} className="resume-project-item" style={{ marginBottom: iMargin }}>
                   <div className="resume-project-header">
                     <div className="resume-project-name-role">
-                      <span style={{ fontSize: '14px', fontWeight: 'bold' }}>{proj.name}</span>
-                      <span className="resume-project-tag" style={{ fontSize: '9px', borderRadius: `${config.borderRadius}px` }}>{proj.type}</span>
+                      {editText(`projects.${index}.name`, proj.name, { style: { fontSize: '14px', fontWeight: 'bold' } })}
+                      {editText(`projects.${index}.type`, proj.type, { className: 'resume-project-tag', style: { fontSize: '9px', borderRadius: `${config.borderRadius}px` } })}
                     </div>
                     <div style={{ fontSize: '11.5px', color: 'var(--resume-text-secondary)' }}>
-                      {proj.startDate} – {proj.endDate}
+                      {editText(`projects.${index}.startDate`, proj.startDate)} – {editText(`projects.${index}.endDate`, proj.endDate)}
                     </div>
                   </div>
                   <div style={{ fontSize: '11.5px', color: 'var(--resume-text-secondary)', marginBottom: '2px', fontStyle: 'italic' }}>
-                    角色：{proj.role}
+                    角色：{editText(`projects.${index}.role`, proj.role)}
                   </div>
                   {proj.repo && (
                     <div className="resume-project-repo" style={{ fontSize: '11.5px', marginBottom: '4px' }}>
-                      开源仓库：<a href={proj.repo.startsWith('http') ? proj.repo : `https://${proj.repo}`} target="_blank" rel="noopener noreferrer">{proj.repo}</a>
+                      开源仓库：{editText(`projects.${index}.repo`, proj.repo)}
                     </div>
                   )}
                   {proj.work && proj.work.length > 0 && (
                     <ul className="resume-bullet-list" style={{ fontSize: '12px' }}>
                       {proj.work.map((workLine, wIdx) => (
-                        <li key={wIdx}>{parseInlineMarkdown(workLine)}</li>
+                        <li key={wIdx}>{editText(`projects.${index}.work.${wIdx}`, workLine)}</li>
                       ))}
                     </ul>
                   )}
                   {proj.outcomes && proj.outcomes.length > 0 && (
                     <ul className="resume-bullet-list outcomes" style={{ marginTop: '2px', fontSize: '12px' }}>
                       {proj.outcomes.map((outcomeLine, oIdx) => (
-                        <li key={oIdx}>{parseInlineMarkdown(outcomeLine)}</li>
+                        <li key={oIdx}>{editText(`projects.${index}.outcomes.${oIdx}`, outcomeLine)}</li>
                       ))}
                     </ul>
                   )}
+                  <button
+                    className="resume-project-delete no-print"
+                    type="button"
+                    onClick={() => {
+                      if (window.confirm(`确定删除项目“${proj.name || '未命名项目'}”吗？`)) onDeleteProject(index);
+                    }}
+                  >
+                    删除项目
+                  </button>
                 </div>
               ))}
+              <button className="resume-project-add no-print" type="button" onClick={onAddProject}>新增项目</button>
             </div>
           </div>
         ) : null;
@@ -193,7 +304,7 @@ export default function ResumePreview({ resumeData, layoutConfig, sections, onLa
               {visibleHonors.map((honor, idx) => (
                 <div key={idx} style={{ display: 'flex', alignItems: 'flex-start', gap: '4px' }}>
                   <span>🏆</span>
-                  <span>{parseInlineMarkdown(honor)}</span>
+                  {editText(`honors.${idx}`, honor)}
                 </div>
               ))}
             </div>
@@ -207,7 +318,7 @@ export default function ResumePreview({ resumeData, layoutConfig, sections, onLa
               {visibleCertificates.map((certificate, idx) => (
                 <div key={idx} style={{ display: 'flex', alignItems: 'flex-start', gap: '4px' }}>
                   <span>🎖️</span>
-                  <span>{parseInlineMarkdown(certificate)}</span>
+                  {editText(`certificates.${idx}`, certificate)}
                 </div>
               ))}
             </div>
@@ -221,7 +332,7 @@ export default function ResumePreview({ resumeData, layoutConfig, sections, onLa
               {visibleHobbies.map((hobby, idx) => (
                 <div key={idx} style={{ display: 'flex', alignItems: 'flex-start', gap: '4px' }}>
                   <span>🌿</span>
-                  <span>{parseInlineMarkdown(hobby)}</span>
+                  {editText(`hobbies.${idx}`, hobby)}
                 </div>
               ))}
             </div>
@@ -235,7 +346,7 @@ export default function ResumePreview({ resumeData, layoutConfig, sections, onLa
               {visibleEvaluations.map((evalLine, idx) => (
                 <li key={idx} style={{ listStyleType: 'none', position: 'relative', paddingLeft: '12px', marginBottom: '4px' }}>
                   <span style={{ position: 'absolute', left: 0, color: 'var(--resume-accent)' }}>•</span>
-                  {parseInlineMarkdown(evalLine)}
+                  {editText(`selfEvaluation.${idx}`, evalLine)}
                 </li>
               ))}
             </ul>
@@ -269,9 +380,12 @@ export default function ResumePreview({ resumeData, layoutConfig, sections, onLa
     '--resume-accent': config.accentColor,
     '--resume-divider': config.dividerColor,
     '--resume-accent-rgb': hexToRgbStr(config.accentColor),
+    '--resume-name-size': `${config.nameFontSize ?? 22}pt`,
+    '--resume-title-size': `${config.titleFontSize ?? 12.5}pt`,
+    '--resume-body-size': `${config.bodyFontSize ?? 10.5}pt`,
     background: config.bgColor,
     color: config.textColor,
-    fontFamily: config.fontFamily === 'Inter' ? "'Inter', 'Noto Sans SC', sans-serif" : config.fontFamily === 'Outfit' ? "'Outfit', 'Noto Sans SC', sans-serif" : "'Noto Sans SC', sans-serif",
+    fontFamily: getResumeFontStack(config.fontFamily),
     padding: `${config.padding}mm ${isDouble ? (config.doubleRightPadding ?? config.padding) : config.padding}mm ${config.padding}mm ${isDouble ? (config.doubleLeftPadding ?? config.padding) : config.padding}mm`,
     lineHeight: config.lineHeight,
     borderRadius: '4px'
@@ -296,10 +410,12 @@ export default function ResumePreview({ resumeData, layoutConfig, sections, onLa
 
     return (
       <div 
-        className={`resume-paper ${config.density === 'compact' ? 'density-compact' : ''} ${config.timeline ? 'timeline-style' : ''}`}
+        className={`resume-paper density-${config.density || 'comfortable'} ${config.timeline ? 'timeline-style' : ''}`}
         id="resume-print-area"
         style={dynamicPaperStyles}
       >
+        {renderOverflowNotice()}
+        {renderFormattingToolbar()}
         <div className="resume-layout-double" style={{ gridTemplateColumns: `${config.leftColumnRatio ?? 31}% 1fr` }}>
           {/* Left Column (Narrow Sidebar) */}
           <div className="left-col" style={{ borderRight: `1px solid var(--resume-border)` }}>
@@ -318,13 +434,13 @@ export default function ResumePreview({ resumeData, layoutConfig, sections, onLa
             <div className="resume-section" style={{ marginBottom: `${config.sectionMargin}px` }}>
               {renderSectionTitle('👤 基本信息')}
               <div className="vertical-contact" style={{ marginTop: '6px' }}>
-                <div className="vertical-contact-item"><span>📞</span> {personalInfo.phone}</div>
-                <div className="vertical-contact-item"><span>✉️</span> <a href={`mailto:${personalInfo.email}`}>{personalInfo.email}</a></div>
+                <div className="vertical-contact-item"><span>📞</span> {editText('personalInfo.phone', personalInfo.phone)}</div>
+                <div className="vertical-contact-item"><span>✉️</span> {editText('personalInfo.email', personalInfo.email)}</div>
                 <div className="vertical-contact-item" style={{ fontSize: '11px' }}>
-                  <span>🔗</span> <a href={`https://${personalInfo.github}`} target="_blank" rel="noopener noreferrer">{personalInfo.github}</a>
+                  <span>🔗</span> {editText('personalInfo.github', personalInfo.github)}
                 </div>
-                {personalInfo.city && <div className="vertical-contact-item"><span>📍</span> {personalInfo.city}</div>}
-                {personalInfo.birthDate && <div className="vertical-contact-item"><span>🎂</span> {personalInfo.birthDate}</div>}
+                {personalInfo.city && <div className="vertical-contact-item"><span>📍</span> {editText('personalInfo.city', personalInfo.city)}</div>}
+                {personalInfo.birthDate && <div className="vertical-contact-item"><span>🎂</span> {editText('personalInfo.birthDate', personalInfo.birthDate)}</div>}
               </div>
             </div>
 
@@ -336,9 +452,9 @@ export default function ResumePreview({ resumeData, layoutConfig, sections, onLa
           <div className="right-col">
             {/* Header: Name and Intent */}
             <div style={{ borderBottom: `2px solid var(--resume-accent)`, paddingBottom: '10px', marginBottom: '16px' }}>
-              <h1 className="resume-name" style={{ fontSize: '28px', marginBottom: '4px', color: 'var(--resume-accent)' }}>{personalInfo.name}</h1>
+              {editText('personalInfo.name', personalInfo.name, { className: 'resume-name', block: true, style: { marginBottom: '4px', color: 'var(--resume-accent)' } })}
               <div className="resume-intent" style={{ color: 'var(--resume-text-secondary)', fontSize: '14px', fontWeight: 'bold' }}>
-                求职意向：{personalInfo.intent}
+                求职意向：{editText('personalInfo.intent', personalInfo.intent)}
               </div>
             </div>
 
@@ -380,36 +496,38 @@ export default function ResumePreview({ resumeData, layoutConfig, sections, onLa
 
   return (
     <div 
-      className={`resume-paper ${config.density === 'compact' ? 'density-compact' : ''} ${config.timeline ? 'timeline-style' : ''}`}
+      className={`resume-paper density-${config.density || 'comfortable'} ${config.timeline ? 'timeline-style' : ''}`}
       id="resume-print-area"
       style={dynamicPaperStyles}
     >
+      {renderOverflowNotice()}
+      {renderFormattingToolbar()}
       {/* Dynamic Header */}
       {hasPhoto ? (
         <div className="resume-header-grid" style={{ marginBottom: `${config.sectionMargin}px` }}>
           <div className="resume-header-info">
-            <h1 className="resume-name" style={{ textAlign: 'left', color: 'var(--resume-accent)' }}>{personalInfo.name}</h1>
+            {editText('personalInfo.name', personalInfo.name, { className: 'resume-name', block: true, style: { textAlign: 'left', color: 'var(--resume-accent)' } })}
             <div className="resume-intent" style={{ textAlign: 'left', color: 'var(--resume-text-secondary)', fontWeight: 'bold' }}>
-              求职意向：{personalInfo.intent}
+              求职意向：{editText('personalInfo.intent', personalInfo.intent)}
             </div>
             <div className="resume-contact" style={{ justifyContent: 'flex-start' }}>
               <div className="resume-contact-item">
-                <span>📞</span> {personalInfo.phone}
+                <span>📞</span> {editText('personalInfo.phone', personalInfo.phone)}
               </div>
               <div className="resume-contact-item">
-                <span>✉️</span> <a href={`mailto:${personalInfo.email}`}>{personalInfo.email}</a>
+                <span>✉️</span> {editText('personalInfo.email', personalInfo.email)}
               </div>
               <div className="resume-contact-item">
-                <span>🔗</span> <a href={`https://${personalInfo.github}`} target="_blank" rel="noopener noreferrer">{personalInfo.github}</a>
+                <span>🔗</span> {editText('personalInfo.github', personalInfo.github)}
               </div>
               {personalInfo.city && (
                 <div className="resume-contact-item">
-                  <span>📍</span> {personalInfo.city}
+                  <span>📍</span> {editText('personalInfo.city', personalInfo.city)}
                 </div>
               )}
               {personalInfo.birthDate && (
                 <div className="resume-contact-item">
-                  <span>🎂</span> {personalInfo.birthDate}
+                  <span>🎂</span> {editText('personalInfo.birthDate', personalInfo.birthDate)}
                 </div>
               )}
             </div>
@@ -420,28 +538,28 @@ export default function ResumePreview({ resumeData, layoutConfig, sections, onLa
         </div>
       ) : (
         <div className="resume-header" style={{ marginBottom: `${config.sectionMargin}px` }}>
-          <h1 className="resume-name" style={{ color: 'var(--resume-accent)' }}>{personalInfo.name}</h1>
+          {editText('personalInfo.name', personalInfo.name, { className: 'resume-name', block: true, style: { color: 'var(--resume-accent)' } })}
           <div className="resume-intent" style={{ color: 'var(--resume-text-secondary)', fontWeight: 'bold' }}>
-            求职意向：{personalInfo.intent}
+            求职意向：{editText('personalInfo.intent', personalInfo.intent)}
           </div>
           <div className="resume-contact" style={{ justifyContent: 'center' }}>
             <div className="resume-contact-item">
-              <span>📞</span> {personalInfo.phone}
+              <span>📞</span> {editText('personalInfo.phone', personalInfo.phone)}
             </div>
             <div className="resume-contact-item">
-              <span>✉️</span> <a href={`mailto:${personalInfo.email}`}>{personalInfo.email}</a>
+              <span>✉️</span> {editText('personalInfo.email', personalInfo.email)}
             </div>
             <div className="resume-contact-item">
-              <span>🔗</span> <a href={`https://${personalInfo.github}`} target="_blank" rel="noopener noreferrer">{personalInfo.github}</a>
+              <span>🔗</span> {editText('personalInfo.github', personalInfo.github)}
             </div>
             {personalInfo.city && (
               <div className="resume-contact-item">
-                <span>📍</span> {personalInfo.city}
+                <span>📍</span> {editText('personalInfo.city', personalInfo.city)}
               </div>
             )}
             {personalInfo.birthDate && (
               <div className="resume-contact-item">
-                <span>🎂</span> {personalInfo.birthDate}
+                <span>🎂</span> {editText('personalInfo.birthDate', personalInfo.birthDate)}
               </div>
             )}
           </div>

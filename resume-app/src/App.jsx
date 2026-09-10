@@ -9,9 +9,72 @@ import RawEditor from './components/RawEditor';
 import { jsonToMarkdown, markdownToJson } from './utils/markdownParser';
 
 const RESUME_STORAGE_KEY = 'cv-craft-resume';
+const LAYOUT_STORAGE_KEY = 'cv-craft-layout';
 const HISTORY_STORAGE_KEY = 'cv-craft-history';
 const MAX_HISTORY_RECORDS = 20;
 const MAX_HISTORY_PHOTO_LENGTH = 500000;
+
+const RESUME_TEMPLATES = [
+  {
+    id: 'business',
+    name: '商务标准',
+    description: '双栏 · 清晰信息层级',
+    accent: '#1e3a8a',
+    config: { accentColor: '#1e3a8a', dividerColor: '#94a3b8', bgColor: '#ffffff', textColor: '#1f2937', layoutStyle: 'double', fontFamily: 'Microsoft YaHei', titleStyle: 'leftbar', density: 'comfortable', lineHeight: 1.55, sectionMargin: 16, itemMargin: 12 }
+  },
+  {
+    id: 'office',
+    name: '经典文档',
+    description: '单栏 · Office 风格',
+    accent: '#334155',
+    config: { accentColor: '#334155', dividerColor: '#64748b', bgColor: '#ffffff', textColor: '#1f2937', layoutStyle: 'single', fontFamily: 'DengXian', titleStyle: 'bottomline', density: 'comfortable', lineHeight: 1.6, sectionMargin: 18, itemMargin: 12 }
+  },
+  {
+    id: 'minimal',
+    name: '极简留白',
+    description: '单栏 · 适合创意岗位',
+    accent: '#0f766e',
+    config: { accentColor: '#0f766e', dividerColor: '#99f6e4', bgColor: '#ffffff', textColor: '#27303a', layoutStyle: 'single', fontFamily: 'Noto Sans SC', titleStyle: 'plain', density: 'comfortable', lineHeight: 1.7, sectionMargin: 20, itemMargin: 14 }
+  }
+];
+
+const getResumeFontStack = (fontFamily) => {
+  const fontStacks = {
+    'Microsoft YaHei': "'Microsoft YaHei', 'Noto Sans SC', sans-serif",
+    DengXian: "'DengXian', 'Microsoft YaHei', 'Noto Sans SC', sans-serif",
+    SimSun: "SimSun, 'Songti SC', serif",
+    Inter: "'Inter', 'Noto Sans SC', sans-serif",
+    Outfit: "'Outfit', 'Noto Sans SC', sans-serif"
+  };
+  return fontStacks[fontFamily] || "'Noto Sans SC', sans-serif";
+};
+
+const DEFAULT_LAYOUT_CONFIG = {
+  templateId: 'business',
+  accentColor: '#1e3a8a',
+  dividerColor: '#3b82f6',
+  bgColor: '#ffffff',
+  textColor: '#1f2937',
+  density: 'comfortable',
+  showPhoto: true,
+  timeline: true,
+  layoutStyle: 'double',
+  showGuidelines: false,
+  fontFamily: 'Microsoft YaHei',
+  nameFontSize: 22,
+  titleFontSize: 12.5,
+  bodyFontSize: 10.5,
+  lineHeight: 1.55,
+  padding: 20,
+  doubleLeftPadding: 20,
+  doubleRightPadding: 20,
+  leftColumnRatio: 31,
+  sectionMargin: 16,
+  itemMargin: 12,
+  titleStyle: 'leftbar',
+  borderRadius: 6,
+  fieldStyles: {}
+};
 
 const isTauriApp = () => typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 
@@ -70,6 +133,15 @@ const loadStoredResume = () => {
   }
 };
 
+const loadStoredLayoutConfig = () => {
+  try {
+    const savedLayout = localStorage.getItem(LAYOUT_STORAGE_KEY);
+    return savedLayout ? { ...DEFAULT_LAYOUT_CONFIG, ...JSON.parse(savedLayout) } : DEFAULT_LAYOUT_CONFIG;
+  } catch {
+    return DEFAULT_LAYOUT_CONFIG;
+  }
+};
+
 const loadHistoryRecords = () => {
   try {
     const savedHistory = JSON.parse(localStorage.getItem(HISTORY_STORAGE_KEY) || '[]');
@@ -94,6 +166,45 @@ const loadHistoryRecords = () => {
   }
 };
 
+const updateResumeField = (data, path, value) => {
+  const keys = path.split('.');
+  const updateBranch = (branch, index) => {
+    const key = Number.isNaN(Number(keys[index])) ? keys[index] : Number(keys[index]);
+    const copy = Array.isArray(branch) ? [...branch] : { ...branch };
+    copy[key] = index === keys.length - 1 ? value : updateBranch(branch[key], index + 1);
+    return copy;
+  };
+  return updateBranch(data, 0);
+};
+
+const createProject = () => ({
+  name: '新项目名称',
+  role: '主要开发者',
+  type: '个人开源项目',
+  startDate: '2026.01',
+  endDate: '至今',
+  enabled: true,
+  repo: '',
+  work: ['负责开发...'],
+  outcomes: ['完成开发并部署上线...']
+});
+
+const parseLLMResponse = (responseText) => {
+  if (typeof responseText !== 'string' || !responseText.trim()) return [];
+  const jsonText = responseText.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
+  try {
+    const parsed = JSON.parse(jsonText);
+    if (!Array.isArray(parsed.options)) return [];
+    return parsed.options
+      .filter((option) => typeof option === 'string')
+      .map((option) => option.trim())
+      .filter(Boolean)
+      .slice(0, 3);
+  } catch {
+    return [];
+  }
+};
+
 export default function App() {
   const [resumeData, setResumeData] = useState(loadStoredResume);
   const [activeTab, setActiveTab] = useState('visual'); // 'visual' or 'raw'
@@ -107,6 +218,28 @@ export default function App() {
   const [availableUpdate, setAvailableUpdate] = useState(null);
   const [updateProgress, setUpdateProgress] = useState(null);
 
+  const handlePreviewFieldChange = useCallback((path, value) => {
+    const nextValue = path === 'education.courses'
+      ? value.split('、').map((course) => course.trim()).filter(Boolean)
+      : value;
+    setResumeData((data) => updateResumeField(data, path, nextValue));
+  }, []);
+
+  const handleAddProjectFromPreview = useCallback(() => {
+    setResumeData((data) => ({ ...data, projects: [...data.projects, createProject()] }));
+  }, []);
+
+  const handleDeleteProjectFromPreview = useCallback((index) => {
+    setResumeData((data) => ({ ...data, projects: data.projects.filter((_, projectIndex) => projectIndex !== index) }));
+  }, []);
+
+  const handlePreviewStyleChange = useCallback((path, style) => {
+    setLayoutConfig((config) => ({
+      ...config,
+      fieldStyles: { ...(config.fieldStyles || {}), [path]: { ...(config.fieldStyles?.[path] || {}), ...style } }
+    }));
+  }, []);
+
   // Click outside listener to close the export dropdown
   useEffect(() => {
     const handleClickOutside = (event) => {
@@ -119,29 +252,7 @@ export default function App() {
   }, [exportDropdownOpen]);
   const [theme, setTheme] = useState('dark');
   
-  // Custom print layout configuration
-  const [layoutConfig, setLayoutConfig] = useState({
-    accentColor: '#1e3a8a',
-    dividerColor: '#3b82f6',
-    bgColor: '#ffffff',
-    textColor: '#1f2937',
-    density: 'comfortable', // 'compact' or 'comfortable'
-    showPhoto: true,
-    timeline: true,
-    layoutStyle: 'double',  // 'single' or 'double' (Modern two-column)
-    showGuidelines: false,  // Visual guidelines for page limits
-    // Advanced UI Styling
-    fontFamily: 'Noto Sans SC',
-    lineHeight: 1.55,
-    padding: 20, // margins in mm
-    doubleLeftPadding: 20,
-    doubleRightPadding: 20,
-    leftColumnRatio: 31,
-    sectionMargin: 16, // px between sections
-    itemMargin: 12, // px between items
-    titleStyle: 'leftbar', // 'leftbar', 'bottomline', 'borderwrap', 'plain'
-    borderRadius: 6
-  });
+  const [layoutConfig, setLayoutConfig] = useState(loadStoredLayoutConfig);
 
   // Modular Layout Sections Order
   const [sections, setSections] = useState([
@@ -156,12 +267,31 @@ export default function App() {
 
   // AI Connection configuration
   const [aiConfig, setAiConfig] = useState({
-    engine: 'mock', // 'mock', 'ollama', 'gemini', 'openai'
-    endpoint: 'http://localhost:11434',
-    model: 'qwen2.5:1.5b',
+    engine: 'lmstudio',
+    endpoint: 'http://127.0.0.1:1234/v1',
+    model: 'google/gemma-4-12b-qat',
     apiKey: '',
     showSettings: false
   });
+  const [lmStudioStatus, setLmStudioStatus] = useState('idle');
+  const [lmStudioError, setLmStudioError] = useState('');
+
+  const checkLmStudioConnection = useCallback(async () => {
+    setLmStudioStatus('checking');
+    setLmStudioError('');
+    try {
+      const response = await fetch(`${aiConfig.endpoint.replace(/\/$/, '')}/models`);
+      if (!response.ok) throw new Error(`服务返回 ${response.status}`);
+      const data = await response.json();
+      const modelIds = (data.data || []).map((model) => model.id);
+      if (!modelIds.length) throw new Error('未发现已加载的模型');
+      if (aiConfig.model && !modelIds.includes(aiConfig.model)) throw new Error(`未发现模型：${aiConfig.model}`);
+      setLmStudioStatus('connected');
+    } catch (error) {
+      setLmStudioStatus('error');
+      setLmStudioError(error.message || '无法连接本地服务');
+    }
+  }, [aiConfig.endpoint, aiConfig.model]);
 
   // AI Polish Modal State
   const [polishModal, setPolishModal] = useState({
@@ -295,6 +425,15 @@ export default function App() {
     return () => window.clearTimeout(timeoutId);
   }, [historyRecords, isHydrated, resumeData]);
 
+  useEffect(() => {
+    if (!isHydrated) return;
+    try {
+      localStorage.setItem(LAYOUT_STORAGE_KEY, JSON.stringify(layoutConfig));
+    } catch (error) {
+      console.error('版式保存失败：', error);
+    }
+  }, [isHydrated, layoutConfig]);
+
   // Clean up audio context on unmount
   useEffect(() => {
     return () => {
@@ -355,7 +494,7 @@ export default function App() {
     }
   };
 
-  // BGE-M3 Text Embedding Semantic Matcher simulation
+  // Local keyword coverage checker
   const handleJdMatch = () => {
     if (!jdText.trim()) return;
     setIsMatching(true);
@@ -408,8 +547,7 @@ export default function App() {
     }, 1000);
   };
 
-  // BGE-M3 Smart Resume Optimizer
-  const handleBgeOptimize = () => {
+  const _handleBgeOptimize = () => {
     if (!matchResult || matchResult.missing.length === 0) return;
     
     setIsMatching(true);
@@ -476,7 +614,7 @@ export default function App() {
         missing: []
       });
       setIsMatching(false);
-      alert("✨ BGE-M3 语义定向调优成功！项目技术描述已重构为高契合度句式，并补充了 JD 缺失关键词。");
+      alert("本地规则已更新项目描述。");
     }, 1500);
   };
 
@@ -492,14 +630,6 @@ export default function App() {
         "🤖 模型运算中..."
       ]
     });
-
-    if (aiConfig.engine === 'mock') {
-      setTimeout(() => {
-        const suggestions = getMockSuggestions(rawText);
-        setPolishModal(prev => ({ ...prev, generatedOptions: suggestions }));
-      }, 700);
-      return;
-    }
 
     const systemPrompt = `你是一位顶尖的简历优化专家和技术面试官。请帮我把下面这段简历描述（项目开发工作或收获成果）润色得更专业、更技术化。
 润色要求：
@@ -544,6 +674,20 @@ ${rawText}`;
         if (!res.ok) throw new Error(`Google Gemini 接口请求失败 (${res.status})`);
         const data = await res.json();
         responseText = data.candidates[0].content.parts[0].text;
+      } else if (aiConfig.engine === 'lmstudio') {
+        const res = await fetch(`${aiConfig.endpoint}/chat/completions`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: aiConfig.model,
+            messages: [{ role: 'user', content: systemPrompt }],
+            temperature: 0.4,
+            max_tokens: 768
+          })
+        });
+        if (!res.ok) throw new Error(`LM Studio 请求失败 (${res.status})`);
+        const data = await res.json();
+        responseText = data.choices?.[0]?.message?.content || '';
       } else if (aiConfig.engine === 'openai') {
         const res = await fetch(`${aiConfig.endpoint}/chat/completions`, {
           method: 'POST',
@@ -571,13 +715,12 @@ ${rawText}`;
         throw new Error("解析润色文本格式失败，模型返回值不满足规范");
       }
     } catch (err) {
-      console.error("Local/Cloud model generation error, falling back", err);
-      const fallbacks = getMockSuggestions(rawText);
+      console.error("Local/Cloud model generation error", err);
       setPolishModal(prev => ({ 
         ...prev, 
         generatedOptions: [
-          `⚠️ AI 接口请求未成功 (${err.message})。已为您自动切换至本地规则引擎：`,
-          ...fallbacks
+          `⚠️ AI 润色未完成：${err.message}`,
+          '请确认 LM Studio 已启动 Local Server，并且已加载对话模型后重试。'
         ]
       }));
     }
@@ -694,16 +837,20 @@ ${rawText}`;
     const visibleCourses = (education.courses || []).filter(hasText);
     const hasEducation = [education.school, education.major, education.degree, education.startDate, education.endDate, education.status].some(hasText)
       || visibleCourses.length > 0;
-    const visibleSkills = skills.filter((skill) => hasText(skill.category) || (skill.items || []).some(hasText));
-    const visibleProjects = projects.filter((project) => project.enabled !== false && (
-      [project.name, project.role, project.type, project.repo].some(hasText)
-      || (project.work || []).some(hasText)
-      || (project.outcomes || []).some(hasText)
-    ));
-    const visibleHonors = honors.filter(hasText);
-    const visibleCertificates = certificates.filter(hasText);
-    const visibleHobbies = hobbies.filter(hasText);
-    const visibleEvaluations = selfEvaluation.filter(hasText);
+    const visibleSkills = skills
+      .map((skill, index) => ({ skill, index }))
+      .filter(({ skill }) => hasText(skill.category) || (skill.items || []).some(hasText));
+    const visibleProjects = projects
+      .map((project, index) => ({ project, index }))
+      .filter(({ project }) => project.enabled !== false && (
+        [project.name, project.role, project.type, project.repo].some(hasText)
+        || (project.work || []).some(hasText)
+        || (project.outcomes || []).some(hasText)
+      ));
+    const visibleHonors = honors.map((honor, index) => ({ honor, index })).filter(({ honor }) => hasText(honor));
+    const visibleCertificates = certificates.map((certificate, index) => ({ certificate, index })).filter(({ certificate }) => hasText(certificate));
+    const visibleHobbies = hobbies.map((hobby, index) => ({ hobby, index })).filter(({ hobby }) => hasText(hobby));
+    const visibleEvaluations = selfEvaluation.map((line, index) => ({ line, index })).filter(({ line }) => hasText(line));
 
     const escapeHTML = (text) => {
       if (!text) return "";
@@ -716,6 +863,19 @@ ${rawText}`;
         .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
         .replace(/\[(.*?)\]\((.*?)\)/g, '<a href="$2" target="_blank">$1</a>');
     };
+
+    const fieldStyleHTML = (path) => {
+      const style = config.fieldStyles?.[path] || {};
+      const parts = [];
+      if (['Microsoft YaHei', 'DengXian', 'SimSun'].includes(style.fontFamily)) parts.push(`font-family:${getResumeFontStack(style.fontFamily)}`);
+      if (/^([89]|[12][0-9]|3[0-2])(\.\d+)?pt$/.test(style.fontSize || '')) parts.push(`font-size:${style.fontSize}`);
+      if (style.fontWeight === '700') parts.push('font-weight:700');
+      if (/^#[0-9a-fA-F]{6}$/.test(style.color || '')) parts.push(`color:${style.color}`);
+      if (['left', 'center'].includes(style.textAlign)) parts.push(`text-align:${style.textAlign};display:inline-block;width:100%`);
+      return parts.join(';');
+    };
+
+    const fieldHTML = (path, content) => `<span style="${fieldStyleHTML(path)}">${content}</span>`;
 
     // Helper to render customized section titles for HTML export
     const renderTitleHTML = (title) => {
@@ -743,41 +903,41 @@ ${rawText}`;
 
     const coursesHTML = visibleCourses.map(c => escapeHTML(c)).join('、');
     
-    const skillsHTML = visibleSkills.map(skill => `
+    const skillsHTML = visibleSkills.map(({ skill, index }) => `
       <div class="skill-cat">
-        <span class="skill-cat-title">${escapeHTML(skill.category)}</span>：
-        <span>${(skill.items || []).filter(hasText).map(item => parseMD(item)).join('；')}</span>
+        <span class="skill-cat-title">${fieldHTML(`skills.${index}.category`, escapeHTML(skill.category))}</span>：
+        <span>${(skill.items || []).map((item, itemIndex) => hasText(item) ? fieldHTML(`skills.${index}.items.${itemIndex}`, parseMD(item)) : '').filter(Boolean).join('；')}</span>
       </div>
     `).join('');
 
-    const skillsVerticalHTML = visibleSkills.map(skill => `
+    const skillsVerticalHTML = visibleSkills.map(({ skill, index }) => `
       <div class="skill-cat" style="display: block; margin-bottom: 6px;">
-        <div style="font-weight: bold; color: ${config.textColor}; margin-bottom: 2px;">${escapeHTML(skill.category)}</div>
+        <div style="font-weight: bold; color: ${config.textColor}; margin-bottom: 2px;">${fieldHTML(`skills.${index}.category`, escapeHTML(skill.category))}</div>
         <div style="color: #4b5563; line-height: ${config.lineHeight};">
-          ${(skill.items || []).filter(hasText).map(item => `<div style="margin-bottom: 2px;">• ${parseMD(item)}</div>`).join('')}
+          ${(skill.items || []).map((item, itemIndex) => hasText(item) ? `<div style="margin-bottom: 2px;">• ${fieldHTML(`skills.${index}.items.${itemIndex}`, parseMD(item))}</div>` : '').join('')}
         </div>
       </div>
     `).join('');
 
-    const projectsHTML = visibleProjects.map(proj => `
+    const projectsHTML = visibleProjects.map(({ project: proj, index }) => `
       <div class="project-item" style="margin-bottom: ${config.itemMargin}px;">
         <div class="project-header">
           <div class="project-name-role">
-            <span class="project-name">${escapeHTML(proj.name)}</span>
-            <span class="project-tag" style="border-radius: ${config.borderRadius}px;">${escapeHTML(proj.type)}</span>
-            <span class="project-role" style="font-size: 12px; color: #6b7280; font-weight: normal;">(${escapeHTML(proj.role)})</span>
+            <span class="project-name">${fieldHTML(`projects.${index}.name`, escapeHTML(proj.name))}</span>
+            <span class="project-tag" style="border-radius: ${config.borderRadius}px;">${fieldHTML(`projects.${index}.type`, escapeHTML(proj.type))}</span>
+            <span class="project-role" style="font-size: 12px; color: #6b7280; font-weight: normal;">(${fieldHTML(`projects.${index}.role`, escapeHTML(proj.role))})</span>
           </div>
-          <div class="project-time">${escapeHTML(proj.startDate)} – ${escapeHTML(proj.endDate)}</div>
+          <div class="project-time">${fieldHTML(`projects.${index}.startDate`, escapeHTML(proj.startDate))} – ${fieldHTML(`projects.${index}.endDate`, escapeHTML(proj.endDate))}</div>
         </div>
         ${proj.repo ? `<div class="project-repo">开源仓库：<a href="${proj.repo.startsWith('http') ? proj.repo : 'https://' + proj.repo}" target="_blank">${escapeHTML(proj.repo)}</a></div>` : ''}
         ${proj.work && proj.work.length > 0 ? `
           <ul class="bullet-list">
-            ${proj.work.map(w => `<li>${parseMD(w)}</li>`).join('')}
+            ${proj.work.map((w, workIndex) => `<li>${fieldHTML(`projects.${index}.work.${workIndex}`, parseMD(w))}</li>`).join('')}
           </ul>
         ` : ''}
         ${proj.outcomes && proj.outcomes.length > 0 ? `
           <ul class="bullet-list outcomes" style="margin-top: 4px;">
-            ${proj.outcomes.map(o => `<li>${parseMD(o)}</li>`).join('')}
+            ${proj.outcomes.map((o, outcomeIndex) => `<li>${fieldHTML(`projects.${index}.outcomes.${outcomeIndex}`, parseMD(o))}</li>`).join('')}
           </ul>
         ` : ''}
       </div>
@@ -787,10 +947,10 @@ ${rawText}`;
       <div class="section" style="margin-bottom: ${config.sectionMargin}px;">
         ${renderTitleHTML('🏆 荣誉奖项')}
         <div class="honors-list">
-          ${visibleHonors.map(honor => `
+          ${visibleHonors.map(({ honor, index }) => `
             <div class="honor-item">
               <span>🏆</span>
-              <span>${parseMD(honor)}</span>
+              ${fieldHTML(`honors.${index}`, parseMD(honor))}
             </div>
           `).join('')}
         </div>
@@ -801,10 +961,10 @@ ${rawText}`;
       <div class="section" style="margin-bottom: ${config.sectionMargin}px;">
         ${renderTitleHTML('🎖️ 技能证书')}
         <div class="honors-list">
-          ${visibleCertificates.map(certificate => `
+          ${visibleCertificates.map(({ certificate, index }) => `
             <div class="honor-item">
               <span>🎖️</span>
-              <span>${parseMD(certificate)}</span>
+              ${fieldHTML(`certificates.${index}`, parseMD(certificate))}
             </div>
           `).join('')}
         </div>
@@ -815,10 +975,10 @@ ${rawText}`;
       <div class="section" style="margin-bottom: ${config.sectionMargin}px;">
         ${renderTitleHTML('🌿 兴趣爱好')}
         <div class="honors-list">
-          ${visibleHobbies.map(hobby => `
+          ${visibleHobbies.map(({ hobby, index }) => `
             <div class="honor-item">
               <span>🌿</span>
-              <span>${parseMD(hobby)}</span>
+              ${fieldHTML(`hobbies.${index}`, parseMD(hobby))}
             </div>
           `).join('')}
         </div>
@@ -829,10 +989,10 @@ ${rawText}`;
       <div class="section" style="margin-bottom: ${config.sectionMargin}px;">
         ${renderTitleHTML('💡 自我评价')}
         <ul class="eval-list">
-          ${visibleEvaluations.map(line => `
+          ${visibleEvaluations.map(({ line, index }) => `
             <li>
               <span class="bullet-dot">•</span>
-              ${parseMD(line)}
+              ${fieldHTML(`selfEvaluation.${index}`, parseMD(line))}
             </li>
           `).join('')}
         </ul>
@@ -845,12 +1005,12 @@ ${rawText}`;
           return hasEducation ? `
             <div class="section" style="margin-bottom: ${config.sectionMargin}px;">
               ${renderTitleHTML('🎓 教育背景')}
-              <div style="font-weight: bold; font-size: 13.5px;">${escapeHTML(education.school)}</div>
-              <div style="font-size: 12.5px; color: #4b5563;">${escapeHTML(education.major)}</div>
-              <div style="font-size: 12.5px; color: #4b5563;">${escapeHTML(education.degree)} · ${escapeHTML(education.status)}</div>
-              <div style="font-size: 11.5px; color: #4b5563; margin-bottom: 6px;">${escapeHTML(education.startDate)} – ${escapeHTML(education.endDate)}</div>
+              <div style="font-weight: bold; font-size: 13.5px;">${fieldHTML('education.school', escapeHTML(education.school))}</div>
+              <div style="font-size: 12.5px; color: #4b5563;">${fieldHTML('education.major', escapeHTML(education.major))}</div>
+              <div style="font-size: 12.5px; color: #4b5563;">${fieldHTML('education.degree', escapeHTML(education.degree))}${hasText(education.degree) && hasText(education.status) ? ' · ' : ''}${hasText(education.status) ? fieldHTML('education.status', escapeHTML(education.status)) : ''}</div>
+              <div style="font-size: 11.5px; color: #4b5563; margin-bottom: 6px;">${fieldHTML('education.startDate', escapeHTML(education.startDate))} – ${fieldHTML('education.endDate', escapeHTML(education.endDate))}</div>
               <div style="font-size: 11.5px; color: #4b5563; line-height: 1.4;">
-                <strong>主修课程</strong>：${coursesHTML}
+                <strong>主修课程</strong>：${fieldHTML('education.courses', coursesHTML)}
               </div>
             </div>` : '';
         case 'skills':
@@ -916,12 +1076,12 @@ ${rawText}`;
       padding: 0;
     }
     body {
-      font-family: ${config.fontFamily === 'Inter' ? "'Inter', 'Noto Sans SC'" : config.fontFamily === 'Outfit' ? "'Outfit', 'Noto Sans SC'" : "'Noto Sans SC'"}, sans-serif;
+      font-family: ${getResumeFontStack(config.fontFamily)};
       background-color: ${config.bgColor};
       color: ${config.textColor};
       line-height: ${config.lineHeight};
       padding: ${config.padding}mm ${config.layoutStyle === 'double' ? config.doubleRightPadding : config.padding}mm ${config.padding}mm ${config.layoutStyle === 'double' ? config.doubleLeftPadding : config.padding}mm;
-      font-size: 14.5px;
+      font-size: ${config.bodyFontSize ?? 10.5}pt;
       --resume-accent: ${config.accentColor};
       --resume-divider: ${config.dividerColor};
       --resume-border: #e5e7eb;
@@ -967,7 +1127,7 @@ ${rawText}`;
       object-fit: cover;
     }
     .name {
-      font-size: 25px;
+      font-size: ${config.nameFontSize ?? 22}pt;
       font-weight: 700;
       color: var(--resume-accent);
       margin-bottom: 6px;
@@ -996,7 +1156,7 @@ ${rawText}`;
       page-break-inside: avoid;
     }
     .section-title {
-      font-size: 14.5px;
+      font-size: ${config.titleFontSize ?? 12.5}pt;
       font-weight: 700;
       color: var(--resume-accent);
       margin-bottom: 8px;
@@ -1009,10 +1169,10 @@ ${rawText}`;
       justify-content: space-between;
       font-weight: 600;
       margin-bottom: 2px;
-      font-size: 13.5px;
+      font-size: ${config.bodyFontSize ?? 10.5}pt;
     }
     .edu-courses {
-      font-size: 13px;
+      font-size: ${config.bodyFontSize ?? 10.5}pt;
       color: #4b5563;
       margin-bottom: 8px;
     }
@@ -1020,7 +1180,7 @@ ${rawText}`;
       display: flex;
       flex-direction: column;
       gap: 4px;
-      font-size: 13px;
+      font-size: ${config.bodyFontSize ?? 10.5}pt;
     }
     .skill-cat {
       margin-bottom: 2px;
@@ -1074,7 +1234,7 @@ ${rawText}`;
       align-items: baseline;
       font-weight: 600;
       margin-bottom: 4px;
-      font-size: 13.5px;
+      font-size: ${config.bodyFontSize ?? 10.5}pt;
     }
     .project-name-role {
       display: flex;
@@ -1082,7 +1242,7 @@ ${rawText}`;
       gap: 6px;
     }
     .project-name {
-      font-size: 14.5px;
+      font-size: ${config.bodyFontSize ?? 10.5}pt;
       font-weight: bold;
     }
     .project-tag {
@@ -1112,7 +1272,7 @@ ${rawText}`;
     .bullet-list {
       list-style-type: none;
       padding-left: 0;
-      font-size: 13px;
+      font-size: ${config.bodyFontSize ?? 10.5}pt;
     }
     .bullet-list li {
       position: relative;
@@ -1217,11 +1377,11 @@ ${rawText}`;
         <div class="section" style="margin-bottom: ${config.sectionMargin}px;">
           ${renderTitleHTML('👤 基本信息')}
           <div class="vertical-contact">
-            <div class="vertical-contact-item"><span>📞</span> ${escapeHTML(personalInfo.phone)}</div>
-            <div class="vertical-contact-item"><span>✉️</span> <a href="mailto:${personalInfo.email}">${escapeHTML(personalInfo.email)}</a></div>
-            <div class="vertical-contact-item" style="font-size: 11px;"><span>🔗</span> <a href="https://${personalInfo.github}" target="_blank">${escapeHTML(personalInfo.github)}</a></div>
-            ${personalInfo.city ? `<div class="vertical-contact-item"><span>📍</span> ${escapeHTML(personalInfo.city)}</div>` : ''}
-            ${personalInfo.birthDate ? `<div class="vertical-contact-item"><span>🎂</span> ${escapeHTML(personalInfo.birthDate)}</div>` : ''}
+            <div class="vertical-contact-item"><span>📞</span> ${fieldHTML('personalInfo.phone', escapeHTML(personalInfo.phone))}</div>
+            <div class="vertical-contact-item"><span>✉️</span> ${fieldHTML('personalInfo.email', escapeHTML(personalInfo.email))}</div>
+            <div class="vertical-contact-item" style="font-size: 11px;"><span>🔗</span> ${fieldHTML('personalInfo.github', escapeHTML(personalInfo.github))}</div>
+            ${personalInfo.city ? `<div class="vertical-contact-item"><span>📍</span> ${fieldHTML('personalInfo.city', escapeHTML(personalInfo.city))}</div>` : ''}
+            ${personalInfo.birthDate ? `<div class="vertical-contact-item"><span>🎂</span> ${fieldHTML('personalInfo.birthDate', escapeHTML(personalInfo.birthDate))}</div>` : ''}
           </div>
         </div>
 
@@ -1233,8 +1393,8 @@ ${rawText}`;
       <div class="right-col">
         <!-- Header -->
         <div style="border-bottom: 2px solid var(--resume-accent); padding-bottom: 10px; margin-bottom: 16px;">
-          <h1 class="name" style="font-size: 28px; margin-bottom: 4px;">${escapeHTML(personalInfo.name)}</h1>
-          <div class="intent" style="color: var(--resume-accent); font-size: 14.5px; font-weight: bold;">求职意向：${escapeHTML(personalInfo.intent)}</div>
+          <h1 class="name" style="font-size: 28px; margin-bottom: 4px;">${fieldHTML('personalInfo.name', escapeHTML(personalInfo.name))}</h1>
+          <div class="intent" style="color: var(--resume-accent); font-size: 14.5px; font-weight: bold;">求职意向：${fieldHTML('personalInfo.intent', escapeHTML(personalInfo.intent))}</div>
         </div>
 
         <!-- Right Column Modular Sections -->
@@ -1245,14 +1405,14 @@ ${rawText}`;
     <!-- Classic Single Column Layout -->
     <!-- Header -->
     <div class="header">
-      <h1 class="name">${escapeHTML(personalInfo.name)}</h1>
-      <div class="intent">求职意向：${escapeHTML(personalInfo.intent)}</div>
+      <h1 class="name">${fieldHTML('personalInfo.name', escapeHTML(personalInfo.name))}</h1>
+      <div class="intent">求职意向：${fieldHTML('personalInfo.intent', escapeHTML(personalInfo.intent))}</div>
       <div class="contact">
-        <div class="contact-item"><span>📞</span> ${escapeHTML(personalInfo.phone)}</div>
-        <div class="contact-item"><span>✉️</span> <a href="mailto:${escapeHTML(personalInfo.email)}">${escapeHTML(personalInfo.email)}</a></div>
-        <div class="contact-item"><span>🔗</span> <a href="https://${escapeHTML(personalInfo.github)}" target="_blank">${escapeHTML(personalInfo.github)}</a></div>
-        ${personalInfo.city ? `<div class="contact-item"><span>📍</span> ${escapeHTML(personalInfo.city)}</div>` : ''}
-        ${personalInfo.birthDate ? `<div class="contact-item"><span>🎂</span> ${escapeHTML(personalInfo.birthDate)}</div>` : ''}
+        <div class="contact-item"><span>📞</span> ${fieldHTML('personalInfo.phone', escapeHTML(personalInfo.phone))}</div>
+        <div class="contact-item"><span>✉️</span> ${fieldHTML('personalInfo.email', escapeHTML(personalInfo.email))}</div>
+        <div class="contact-item"><span>🔗</span> ${fieldHTML('personalInfo.github', escapeHTML(personalInfo.github))}</div>
+        ${personalInfo.city ? `<div class="contact-item"><span>📍</span> ${fieldHTML('personalInfo.city', escapeHTML(personalInfo.city))}</div>` : ''}
+        ${personalInfo.birthDate ? `<div class="contact-item"><span>🎂</span> ${fieldHTML('personalInfo.birthDate', escapeHTML(personalInfo.birthDate))}</div>` : ''}
       </div>
     </div>
 
@@ -1681,6 +1841,26 @@ ${rawText}`;
               <div style={{ borderTop: '1px solid var(--panel-border)', paddingBottom: '8px' }}>
                           <div style={{ padding: '16px 24px 8px 24px', borderBottom: '1px solid var(--panel-border)', background: 'rgba(0,0,0,0.08)' }}>
             <label style={{ fontSize: '11px', fontWeight: 'bold', color: 'var(--text-secondary)', display: 'block', marginBottom: '8px' }}>🎨 基础排版配置</label>
+            <div className="template-picker" aria-label="简历模板">
+              {RESUME_TEMPLATES.map((template) => (
+                <button
+                  key={template.id}
+                  type="button"
+                  className={`template-card ${layoutConfig.templateId === template.id ? 'is-active' : ''}`}
+                  onClick={() => setLayoutConfig({ ...layoutConfig, ...template.config, templateId: template.id })}
+                >
+                  <span className="template-card-preview" style={{ '--template-accent': template.accent }}>
+                    <span />
+                    <i />
+                    <i />
+                  </span>
+                  <span>
+                    <strong>{template.name}</strong>
+                    <small>{template.description}</small>
+                  </span>
+                </button>
+              ))}
+            </div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center', marginBottom: '10px' }}>
               
               {/* Preset palettes */}
@@ -1742,6 +1922,16 @@ ${rawText}`;
               >
                 {layoutConfig.showGuidelines ? '📏 隐藏分页线' : '📏 显示分页线'}
               </button>
+              <select
+                value={layoutConfig.density || 'comfortable'}
+                onChange={(event) => setLayoutConfig({ ...layoutConfig, density: event.target.value })}
+                aria-label="A4 排版模式"
+                style={{ height: '24px', padding: '2px 6px', background: 'var(--input-bg)', border: '1px solid var(--panel-border)', borderRadius: '4px', color: 'var(--text-primary)', fontSize: '11px' }}
+              >
+                <option value="comfortable">标准排版</option>
+                <option value="compact">紧凑排版</option>
+                <option value="onepage">单页优先</option>
+              </select>
             </div>
 
             {/* 2. Visual Layout Customizer (Sliders and Color Pickers) - Dimensional Blow */}
@@ -1790,6 +1980,28 @@ ${rawText}`;
 
               {/* Sliders Grid */}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px 16px', fontSize: '11px', borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '8px' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span style={{ color: 'var(--text-secondary)' }}>正文字号</span>
+                    <span>{layoutConfig.bodyFontSize ?? 10.5}pt</span>
+                  </div>
+                  <input
+                    type="number" min="9.5" max="13" step="0.5" value={layoutConfig.bodyFontSize ?? 10.5}
+                    onChange={(e) => setLayoutConfig({ ...layoutConfig, bodyFontSize: Math.min(13, Math.max(9.5, Number(e.target.value) || 10.5)) })}
+                    style={{ width: '100%', padding: '3px 6px', fontSize: '11px' }}
+                  />
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span style={{ color: 'var(--text-secondary)' }}>标题字号</span>
+                    <span>{layoutConfig.titleFontSize ?? 12.5}pt</span>
+                  </div>
+                  <input
+                    type="number" min="12" max="16" step="0.5" value={layoutConfig.titleFontSize ?? 12.5}
+                    onChange={(e) => setLayoutConfig({ ...layoutConfig, titleFontSize: Math.min(16, Math.max(12, Number(e.target.value) || 12.5)) })}
+                    style={{ width: '100%', padding: '3px 6px', fontSize: '11px' }}
+                  />
+                </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                     <span style={{ color: 'var(--text-secondary)' }}>页面边距</span>
@@ -1871,9 +2083,11 @@ ${rawText}`;
                     onChange={(e) => setLayoutConfig({ ...layoutConfig, fontFamily: e.target.value })}
                     style={{ padding: '3px', background: 'var(--input-bg)', border: '1px solid var(--panel-border)', borderRadius: '4px', color: 'var(--text-primary)', fontSize: '11px' }}
                   >
-                    <option value="Noto Sans SC">雅黑 / Noto Sans SC</option>
-                    <option value="Inter">极简现代 / Inter</option>
-                    <option value="Outfit">优雅商务 / Outfit</option>
+                    <option value="Microsoft YaHei">微软雅黑（推荐）</option>
+                    <option value="DengXian">等线（Office）</option>
+                    <option value="SimSun">宋体（正式文档）</option>
+                    <option value="Noto Sans SC">思源黑体</option>
+                    <option value="Inter">Inter（英文简历）</option>
                   </select>
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
@@ -1950,7 +2164,7 @@ ${rawText}`;
                   onChange={(e) => setAiConfig({ ...aiConfig, engine: e.target.value })}
                   style={{ width: '100%', padding: '4px', background: 'var(--input-bg)', border: '1px solid var(--panel-border)', borderRadius: '4px', color: 'var(--text-primary)', fontSize: '12px' }}
                 >
-                  <option value="mock">内建模拟润色 (无需API Key)</option>
+                  <option value="lmstudio">LM Studio（本机）</option>
                   <option value="ollama">Ollama (本地运行小模型)</option>
                   <option value="gemini">Google Gemini Cloud (需要 Key)</option>
                   <option value="openai">OpenAI / 兼容接口 (需要 Key)</option>
@@ -1959,6 +2173,25 @@ ${rawText}`;
 
               {aiConfig.showSettings && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', background: 'rgba(0,0,0,0.15)', padding: '10px', borderRadius: '6px', marginBottom: '8px' }}>
+                  {aiConfig.engine === 'lmstudio' && (
+                    <>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                        <label style={{ fontSize: '10px', color: 'var(--text-secondary)' }}>LM Studio 地址</label>
+                        <input type="text" value={aiConfig.endpoint} onChange={(e) => setAiConfig({ ...aiConfig, endpoint: e.target.value })} style={{ fontSize: '11px', padding: '3px 6px' }} />
+                      </div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                        <label style={{ fontSize: '10px', color: 'var(--text-secondary)' }}>已加载模型</label>
+                        <input type="text" value={aiConfig.model} onChange={(e) => setAiConfig({ ...aiConfig, model: e.target.value })} style={{ fontSize: '11px', padding: '3px 6px' }} />
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <button className="btn btn-secondary btn-sm" type="button" onClick={checkLmStudioConnection} disabled={lmStudioStatus === 'checking'} style={{ height: '24px', padding: '2px 7px', fontSize: '10px' }}>
+                          {lmStudioStatus === 'checking' ? '检测中…' : '检测连接'}
+                        </button>
+                        {lmStudioStatus === 'connected' && <span style={{ fontSize: '9px', color: '#10b981' }}>✓ 服务和当前模型可用</span>}
+                        {lmStudioStatus === 'error' && <span style={{ fontSize: '9px', color: '#f87171' }}>⚠ {lmStudioError}</span>}
+                      </div>
+                    </>
+                  )}
                   {aiConfig.engine === 'ollama' && (
                     <>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
@@ -2045,10 +2278,10 @@ ${rawText}`;
               )}
             </div>
 
-            {/* 5. BGE-M3 Semantic Job Matcher and Auto-Optimizer Panel */}
+            {/* 5. Local keyword coverage panel */}
             <div style={{ marginTop: '12px', borderTop: '1px solid var(--panel-border)', paddingTop: '10px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                <span style={{ fontSize: '11px', fontWeight: 'bold', color: 'var(--text-secondary)' }}>🧠 BGE-M3 岗位匹配度分析</span>
+                <span style={{ fontSize: '11px', fontWeight: 'bold', color: 'var(--text-secondary)' }}>🔎 JD 关键词覆盖检查</span>
                 <button 
                   className="btn btn-secondary btn-sm" 
                   style={{ padding: '2px 6px', fontSize: '10px', height: '18px', margin: 0, textTransform: 'none' }}
@@ -2060,7 +2293,7 @@ ${rawText}`;
 
               {showMatcher && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', background: 'rgba(0,0,0,0.15)', padding: '10px', borderRadius: '6px' }}>
-                  <label style={{ fontSize: '10px', color: 'var(--text-secondary)' }}>粘贴招聘要求 (JD) 开展语义计算</label>
+                  <label style={{ fontSize: '10px', color: 'var(--text-secondary)' }}>粘贴招聘要求（JD），检查当前简历中的关键词覆盖情况</label>
                   <textarea 
                     placeholder="例如：招高级 Python 开发，需要有 YOLO 图像识别或大模型 RAG 项目背景..." 
                     value={jdText} 
@@ -2074,24 +2307,14 @@ ${rawText}`;
                       disabled={isMatching}
                       style={{ flex: 1, height: '26px', fontSize: '11px', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0 }}
                     >
-                      {isMatching ? '⏳ 分析中...' : '🧠 BGE-M3 匹配'}
+                      {isMatching ? '⏳ 检查中...' : '🔎 检查覆盖'}
                     </button>
-                    {matchResult && matchResult.missing.length > 0 && (
-                      <button 
-                        className="btn btn-secondary btn-sm" 
-                        onClick={handleBgeOptimize}
-                        disabled={isMatching}
-                        style={{ flex: 1, height: '26px', fontSize: '11px', color: '#10b981', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0, border: '1px solid #10b981' }}
-                      >
-                        {isMatching ? '⏳ 调优中...' : '✨ BGE一键调优'}
-                      </button>
-                    )}
                   </div>
 
                   {matchResult && (
                     <div style={{ marginTop: '6px', borderTop: '1px dashed rgba(255,255,255,0.1)', paddingTop: '6px' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
-                        <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>语义相似度评分:</span>
+                        <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>关键词覆盖率:</span>
                         <span style={{ fontSize: '13px', fontWeight: 'bold', color: matchResult.score >= 85 ? '#10b981' : '#f59e0b' }}>
                           🎯 {matchResult.score}%
                         </span>
@@ -2100,16 +2323,16 @@ ${rawText}`;
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', fontSize: '10px' }}>
                         {matchResult.matched.length > 0 && (
                           <div style={{ color: '#10b981' }}>
-                            <strong>已满足语义点:</strong> {matchResult.matched.join('、')}
+                            <strong>已覆盖类别:</strong> {matchResult.matched.join('、')}
                           </div>
                         )}
                         {matchResult.missing.length > 0 ? (
                           <div style={{ color: '#f87171', marginTop: '2px' }}>
-                            <strong>建议补充模块:</strong> {matchResult.missing.join('、')}
+                            <strong>待补充类别:</strong> {matchResult.missing.join('、')}
                           </div>
                         ) : (
                           <div style={{ color: '#10b981', marginTop: '2px', fontWeight: '500' }}>
-                            ✓ 完美契合 JD 要求！简历无缺失关键模块！
+                            ✓ 已覆盖当前规则中的全部 JD 类别。
                           </div>
                         )}
                       </div>
@@ -2160,6 +2383,10 @@ ${rawText}`;
             layoutConfig={layoutConfig} 
             sections={sections}
             onLayoutConfigChange={setLayoutConfig}
+            onFieldChange={handlePreviewFieldChange}
+            onAddProject={handleAddProjectFromPreview}
+            onDeleteProject={handleDeleteProjectFromPreview}
+            onFieldStyleChange={handlePreviewStyleChange}
           />
         </section>
       </main>

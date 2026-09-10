@@ -388,7 +388,7 @@ textarea {
   border-radius: 4px;
   color: var(--resume-text-primary);
   padding: 20mm 20mm 20mm 20mm;
-  font-size: 14.5px;
+  font-size: var(--resume-body-size, 10.5pt);
   line-height: 1.55;
   position: relative;
   transition: all var(--transition-speed) ease;
@@ -434,7 +434,7 @@ textarea {
 }
 
 .resume-name {
-  font-size: 25px;
+  font-size: var(--resume-name-size, 22pt);
   font-weight: 700;
   color: var(--resume-accent);
   margin-bottom: 6px;
@@ -483,7 +483,7 @@ textarea {
 }
 
 .resume-section-title {
-  font-size: 14.5px;
+  font-size: var(--resume-title-size, 12.5pt);
   font-weight: 700;
   color: var(--resume-accent);
   border-bottom: 1.5px solid var(--resume-divider);
@@ -512,7 +512,7 @@ textarea {
   justify-content: space-between;
   font-weight: 600;
   margin-bottom: 2px;
-  font-size: 13.5px;
+  font-size: var(--resume-body-size, 10.5pt);
 }
 
 .resume-edu-courses {
@@ -586,7 +586,7 @@ textarea {
   align-items: baseline;
   font-weight: 600;
   margin-bottom: 4px;
-  font-size: 13.5px;
+  font-size: var(--resume-body-size, 10.5pt);
 }
 
 .resume-project-name-role {
@@ -624,7 +624,7 @@ textarea {
 .resume-bullet-list {
   list-style-type: none;
   padding-left: 0;
-  font-size: 13px;
+  font-size: var(--resume-body-size, 10.5pt);
 }
 
 .resume-bullet-list li {
@@ -656,7 +656,7 @@ textarea {
 
 /* Honors List */
 .resume-honors-list {
-  font-size: 13px;
+  font-size: var(--resume-body-size, 10.5pt);
   display: flex;
   flex-direction: column;
   gap: 3px;
@@ -664,7 +664,7 @@ textarea {
 
 /* Self-Evaluation */
 .resume-eval-list {
-  font-size: 13px;
+  font-size: var(--resume-body-size, 10.5pt);
 }
 
 .resume-eval-list li {
@@ -677,11 +677,115 @@ textarea {
 /* Density Overrides */
 .density-compact {
   padding: 12mm 15mm 12mm 15mm !important;
-  font-size: 13px !important;
+  font-size: calc(var(--resume-body-size, 10.5pt) - 0.5pt) !important;
+}
+
+.resume-editable {
+  border-radius: 3px;
+  cursor: text;
+}
+
+.resume-editable:hover,
+.resume-editable:focus {
+  outline: 1px dashed color-mix(in srgb, var(--resume-accent) 60%, transparent);
+  background: color-mix(in srgb, var(--resume-accent) 6%, transparent);
+}
+
+.resume-editable:focus {
+  outline-style: solid;
+}
+
+.resume-project-add,
+.resume-project-delete {
+  border: 1px dashed var(--resume-divider);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--resume-accent);
+  cursor: pointer;
+  font: inherit;
+  font-size: 10px;
+  padding: 3px 7px;
+}
+
+.resume-format-toolbar {
+  position: sticky;
+  top: 8px;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: fit-content;
+  max-width: 100%;
+  margin: 0 0 8px auto;
+  padding: 5px 7px;
+  border: 1px solid #d7dee9;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.12);
+  color: #334155;
+  font-family: 'Microsoft YaHei', sans-serif;
+  font-size: 11px;
+}
+
+.resume-format-toolbar select,
+.resume-format-toolbar input[type='number'],
+.resume-format-toolbar button {
+  height: 26px;
+  border: 1px solid #cbd5e1;
+  border-radius: 3px;
+  background: #fff;
+  color: #334155;
+  font: inherit;
+}
+
+.resume-format-toolbar select { padding: 0 4px; }
+.resume-format-toolbar input[type='number'] { width: 46px; padding: 0 4px; }
+.resume-format-toolbar input[type='color'] { width: 26px; height: 26px; padding: 1px; border: 1px solid #cbd5e1; border-radius: 3px; background: #fff; }
+.resume-format-toolbar button { min-width: 26px; padding: 0 5px; cursor: pointer; }
+.resume-format-toolbar button.is-active { border-color: var(--resume-accent); background: color-mix(in srgb, var(--resume-accent) 12%, white); color: var(--resume-accent); }
+.resume-format-label { color: #64748b; white-space: nowrap; }
+
+.resume-overflow-notice {
+  position: sticky;
+  top: 8px;
+  z-index: 21;
+  width: fit-content;
+  margin: 0 auto 8px;
+  padding: 5px 8px;
+  border: 1px solid #fbbf24;
+  border-radius: 4px;
+  background: #fffbeb;
+  color: #92400e;
+  font-family: 'Microsoft YaHei', sans-serif;
+  font-size: 10px;
+}
+
+.resume-overflow-notice button {
+  margin-left: 7px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: 15px;
+  line-height: 1;
+}
+
+.resume-project-add {
+  margin-top: 4px;
+}
+
+.resume-project-delete {
+  display: none;
+  margin-top: 4px;
+}
+
+.resume-project-item:hover .resume-project-delete,
+.resume-project-item:focus-within .resume-project-delete {
+  display: inline-block;
 }
 
 .density-compact .resume-name {
-  font-size: 22px !important;
+  font-size: max(20pt, calc(var(--resume-name-size, 22pt) - 1pt)) !important;
 }
 
 .density-compact .resume-header {
@@ -698,7 +802,7 @@ textarea {
 
 .density-compact .resume-section-title {
   margin-bottom: 6px !important;
-  font-size: 13.5px !important;
+  font-size: max(12pt, calc(var(--resume-title-size, 12.5pt) - 0.5pt)) !important;
 }
 
 .density-compact .resume-project-item {
@@ -807,6 +911,29 @@ textarea {
   padding-left: 4px;
 }
 
+.density-onepage {
+  font-size: calc(var(--resume-body-size, 10.5pt) - 0.8pt) !important;
+  line-height: 1.4 !important;
+}
+
+.density-onepage .resume-name {
+  font-size: max(20pt, calc(var(--resume-name-size, 22pt) - 1.5pt)) !important;
+}
+
+.density-onepage .resume-section {
+  margin-bottom: 9px !important;
+}
+
+.density-onepage .resume-section-title {
+  font-size: max(12pt, calc(var(--resume-title-size, 12.5pt) - 0.5pt)) !important;
+  margin-bottom: 5px !important;
+}
+
+.density-onepage .resume-project-item,
+.density-onepage .resume-bullet-list li {
+  margin-bottom: 3px !important;
+}
+
 .column-divider-handle {
   position: absolute;
   top: 0;
@@ -861,24 +988,6 @@ textarea {
 
 .resume-sidebar-photo img {
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.08);
-}
-
-/* YOLO scanning animation */
-@keyframes scan {
-  0% { top: 0%; }
-  50% { top: 100%; }
-  100% { top: 0%; }
-}
-.scanning-line {
-  position: absolute;
-  left: 0;
-  right: 0;
-  height: 2px;
-  background: #10b981;
-  box-shadow: 0 0 6px #10b981;
-  animation: scan 1.8s infinite linear;
-  pointer-events: none;
-  z-index: 5;
 }
 
 /* Modal styling for AI prompt polisher */
@@ -974,4 +1083,74 @@ textarea {
 .dropdown-item:hover {
   background: var(--accent-light);
   color: var(--accent-color);
+}
+
+.template-picker {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0 0 12px;
+}
+
+.template-card {
+  display: flex;
+  min-width: 0;
+  gap: 7px;
+  padding: 8px;
+  color: var(--text-primary);
+  text-align: left;
+  background: var(--input-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 7px;
+  cursor: pointer;
+}
+
+.template-card:hover,
+.template-card.is-active {
+  border-color: var(--accent-color);
+  background: var(--accent-light);
+}
+
+.template-card-preview {
+  display: flex;
+  flex: 0 0 28px;
+  flex-direction: column;
+  gap: 3px;
+  height: 36px;
+  padding: 5px;
+  background: #fff;
+  border: 1px solid #dce3ec;
+  border-radius: 2px;
+}
+
+.template-card-preview span,
+.template-card-preview i {
+  display: block;
+  height: 3px;
+  background: #d7dee8;
+  border-radius: 99px;
+}
+
+.template-card-preview span {
+  width: 70%;
+  background: var(--template-accent);
+}
+
+.template-card strong,
+.template-card small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.template-card strong {
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.template-card small {
+  color: var(--text-secondary);
+  font-size: 9px;
+  line-height: 13px;
 }

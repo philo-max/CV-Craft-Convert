@@ -1,25 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 
 export default function ResumeForm({ resumeData, onChange, onAIPolish }) {
   const [activeSection, setActiveSection] = useState('personalInfo');
-  const [isScanning, setIsScanning] = useState(false);
-  const [lastPhoto, setLastPhoto] = useState(resumeData.personalInfo.photo);
   const displayPhoto = resumeData.personalInfo.photo?.length > 500000 ? '' : resumeData.personalInfo.photo;
-
-  // Trigger scan animation when photo changes
-  useEffect(() => {
-    if (resumeData.personalInfo.photo && resumeData.personalInfo.photo !== lastPhoto) {
-      setIsScanning(true);
-      setLastPhoto(resumeData.personalInfo.photo);
-      const timer = setTimeout(() => {
-        setIsScanning(false);
-      }, 1600);
-      return () => clearTimeout(timer);
-    }
-    if (!resumeData.personalInfo.photo) {
-      setLastPhoto('');
-    }
-  }, [resumeData.personalInfo.photo, lastPhoto]);
 
   const updatePersonalInfo = (field, value) => {
     onChange({
@@ -381,34 +364,6 @@ export default function ResumeForm({ resumeData, onChange, onAIPolish }) {
                         alt="预览" 
                         style={{ width: '100%', height: '100%', objectFit: 'cover' }} 
                       />
-                      
-                      {/* Scan Laser Overlay */}
-                      {isScanning && (
-                        <div className="scanning-line" />
-                      )}
-                      
-                      {/* Face bounding box overlay (YOLO face detection model simulation) */}
-                      {!isScanning && (
-                        <div style={{
-                          position: 'absolute',
-                          top: '15%',
-                          left: '20%',
-                          width: '60%',
-                          height: '50%',
-                          border: '2px solid #10b981',
-                          boxShadow: '0 0 4px #10b981',
-                          pointerEvents: 'none'
-                        }}>
-                          <span style={{ position: 'absolute', top: '-11px', left: '-2px', background: '#10b981', color: '#fff', fontSize: '6px', padding: '0px 2px', borderRadius: '2px', fontWeight: 'bold', whiteSpace: 'nowrap' }}>
-                            YOLOv8 Face: 98%
-                          </span>
-                        </div>
-                      )}
-                    </div>
-                    
-                    {/* CV Audit Feedback */}
-                    <div style={{ fontSize: '10px', color: isScanning ? '#9ca3af' : '#10b981', marginTop: '4px', fontWeight: 'bold' }}>
-                      {isScanning ? '⏳ YOLO 视觉评估中...' : '✓ 证件照规范评估通过 (98.6%)'}
                     </div>
                   </div>
                 )}
